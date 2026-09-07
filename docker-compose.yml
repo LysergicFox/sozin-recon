@@ -1,0 +1,14 @@
+# Usage:
+#   docker compose build
+#   docker compose run --rm recon --run-dir /runs/example
+#
+# The ./runs directory on the host is mounted at /runs in the container, so
+# assets.db / raw/ / run_state.json stay inspectable on the host and are never
+# baked into the image. Put your scope.json at ./runs/<name>/scope.json first.
+services:
+  recon:
+    build: .
+    image: sozin-recon
+    volumes:
+      - ./runs:/runs
+    # Recon only makes outbound requests to in-scope targets; no ports exposed.

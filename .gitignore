@@ -1,0 +1,21 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+*Zone.Identifier
+
+# Per-run pipeline state (assets.db, scope.json, run_state.json, raw/,
+# needs_review.json) is generated at runtime against real/test targets and
+# must NEVER be committed: stage 7 extracts real secrets, so a committed run
+# dir would leak live-target findings. Keep run directories out of the repo.
+run_*/
+runs/            # the docker-compose mount dir
+test1/           # legacy nested run dir
+*.db             # assets.db
+raw/
+needs_review.json
+run_state.json
+
+# scope.json carries the in-scope allowlist — never commit a real one.
+# A sanitized scope.example.json is tracked instead.
+scope.json

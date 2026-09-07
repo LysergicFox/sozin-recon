@@ -1,0 +1,19 @@
+{
+  "verified_by_human": true,
+  "in_scope": {
+    "domains": ["*.example.com", "example.com"],
+    "ip_ranges": ["203.0.113.0/24"]
+  },
+  "out_of_scope": {
+    "domains": ["blog.example.com"],
+    "ip_ranges": []
+  },
+  "rate_limit": {
+    "stated_by_program": true,
+    "requests_per_second": 5,
+    "scope": "per_host",
+    "source_text": "please limit automated scanning to 5 req/s",
+    "extracted_by": "human",
+    "resolution": "confirmed"
+  }
+}

@@ -1,0 +1,24 @@
+# Keep run data, secrets, and cruft out of the build context / image.
+.git
+.gitignore
+__pycache__/
+**/__pycache__/
+*.pyc
+.venv/
+venv/
+*Zone.Identifier
+
+# Per-run state must never be baked into the image.
+run_*/
+runs/
+test1/
+*.db
+raw/
+needs_review.json
+run_state.json
+scope.json
+
+# Docker artifacts / local docs not needed at runtime.
+Dockerfile
+.dockerignore
+docker-compose.yml
