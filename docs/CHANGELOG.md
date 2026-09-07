@@ -5,6 +5,24 @@ Compact, newest-first. Status tags: **DONE** / **DESIGN** (locked, not built) /
 
 ---
 
+## 2026-09-07 — `--target-dir`: runs populate a target folder's `runs/`: DONE
+
+**DONE (verified: run-dir resolution exercised directly — dir created + `chmod
+700` + canonical `scope.json` copied + time-sortable name; arg parser rejects
+neither/both).** Adds the run-layout `sozin-dashboard` consumes.
+
+- **`main.py`** — new `--target-dir`, mutually exclusive with `--run-dir` (one
+  required). Given a target folder holding the canonical `scope.json`, recon
+  creates `<target>/runs/run_<UTC-ts>_<shortid>/`, `chmod 700`s it up front (R8),
+  copies the canonical `scope.json` in as the run's immutable snapshot, and runs
+  there. New helpers `resolve_run_dir()` + `_new_run_name()`. `--run-dir` is
+  unchanged; the timestamp-prefixed name sorts chronologically so a consumer can
+  pick the latest run from the dir name alone.
+- **README** — documents `--run-dir` vs `--target-dir` (local + Docker).
+- ⚠️ A full end-to-end pipeline run via `--target-dir` (needs external CLIs + a
+  verified scope) is the natural next confirming run; the run-dir plumbing itself
+  is confirmed.
+
 ## 2026-08-24 — B4 / stage 11 archived-JS mining: DESIGN → DONE (Track B complete)
 
 **DONE (built + verified end-to-end; 23 test suites green).** Realizes **B4** of

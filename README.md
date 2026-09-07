@@ -112,6 +112,27 @@ pip install -r requirements.txt
 python3 main.py --run-dir /path/to/run_directory
 ```
 
+### Where runs go — `--run-dir` vs `--target-dir`
+
+Exactly one is required:
+
+- **`--run-dir <dir>`** — run into an existing directory that already contains a
+  verified `scope.json`. The manual/legacy path.
+- **`--target-dir <dir>`** — point at a **target folder** that holds the
+  canonical `scope.json` (e.g. `bugbounty/targets/<platform>/<target>/`, as
+  produced by the `scope-tos-parser` skill). Recon creates a fresh, time-sortable
+  run dir at `<target>/runs/run_<UTC-ts>_<shortid>/`, `chmod 700`s it, copies the
+  canonical `scope.json` in as the run's immutable snapshot, and runs there.
+
+The `--target-dir` layout (one target folder, many runs under `runs/`) is what
+**`sozin-dashboard`** consumes. Docker note: bind-mount the target folder and
+pass its in-container path, e.g.
+`-v "$PWD/targets:/targets" … --target-dir /targets/hackerone/acme`.
+
+```bash
+python3 main.py --target-dir /path/to/bugbounty/targets/hackerone/acme
+```
+
 ### Re-run a single stage
 
 `testing/run_stage1_only.py` / `run_stage7_only.py` / `run_stage8_only.py` /

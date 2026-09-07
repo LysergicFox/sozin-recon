@@ -8,14 +8,22 @@ stage's discoveries into assets.db and persisting Track-D source records
 for the architecture and RECON_TRACK_D_DESIGN.md for the source-record model.
 
 Usage:
-    python3 main.py --run-dir /path/to/run_directory
+    python3 main.py --run-dir   /path/to/run_directory
+    python3 main.py --target-dir /path/to/bugbounty/targets/<platform>/<target>
 
-Expects run_directory/scope.json to already exist with verified_by_human:
-true and an affirmative rate_limit block (R2).
+With --run-dir, run_directory/scope.json must already exist. With --target-dir,
+the target folder's canonical scope.json is copied into a freshly created,
+timestamped run dir at <target>/runs/run_<UTC-ts>_<shortid>/ and the run happens
+there - this is the layout sozin-dashboard consumes (one target folder, many
+runs under runs/). Either way scope.json must have verified_by_human: true and an
+affirmative rate_limit block (R2).
 """
 
 import argparse
+import shutil
 import sys
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from state import RunState, Asset, ReviewItem, Service
@@ -724,12 +732,57 @@ def run_pipeline(root_domains: list[str], patterns: ScopePatterns, state: RunSta
     logger.info("Stages 1, 3, 4, 5, 6, 6.5, 7, 8, 9, 10, and 11 complete. See %s and %s", state.assets_db_path, state.review_path)
 
 
+def _new_run_name() -> str:
+    """A time-sortable, collision-resistant run-dir name: run_<UTC-ts>_<shortid>.
+
+    The UTC timestamp prefix means a lexical sort of runs/ is a chronological
+    sort, so sozin-dashboard can pick the latest run from the dir name alone
+    (without opening run_state.json). The short uuid suffix disambiguates two
+    runs started within the same second.
+    """
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return f"run_{ts}_{uuid.uuid4().hex[:6]}"
+
+
+def resolve_run_dir(args) -> Path:
+    """Turn the CLI args into the concrete run dir to use.
+
+    --run-dir: used verbatim (legacy/manual path). scope.json is expected to
+      already be inside it.
+    --target-dir: a bug-bounty target folder holding the canonical scope.json.
+      We create <target>/runs/run_<UTC-ts>_<shortid>/, chmod it 700 up front
+      (R8 - it will hold secrets), and copy the canonical scope.json into it so
+      RunState.load_scope() finds it. The target-root scope.json is the
+      authorization of record; the run gets an immutable snapshot copy.
+    """
+    if args.target_dir:
+        target_dir = Path(args.target_dir).resolve()
+        if not target_dir.is_dir():
+            print(f"error: --target-dir {target_dir} is not a directory", file=sys.stderr)
+            sys.exit(2)
+        canonical_scope = target_dir / "scope.json"
+        if not canonical_scope.exists():
+            print(f"error: no scope.json in target folder {target_dir} "
+                  f"(run /scope-tos-parser for this target first)", file=sys.stderr)
+            sys.exit(2)
+        run_dir = target_dir / "runs" / _new_run_name()
+        run_dir.mkdir(parents=True, exist_ok=False)
+        run_dir.chmod(0o700)
+        shutil.copy2(canonical_scope, run_dir / "scope.json")
+        return run_dir
+    return Path(args.run_dir)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Recon agent - stages 1, 3, 4, 5, 6, 7, 8, 9")
-    parser.add_argument("--run-dir", required=True, help="Path to the run directory containing scope.json")
+    src = parser.add_mutually_exclusive_group(required=True)
+    src.add_argument("--run-dir", help="Path to an existing run directory containing scope.json")
+    src.add_argument("--target-dir", help="Path to a target folder containing the canonical "
+                     "scope.json; a new timestamped dir under <target>/runs/ is created and used")
     args = parser.parse_args()
 
-    run_dir = Path(args.run_dir)
+    run_dir = resolve_run_dir(args)
+    logger.info("Run directory: %s", run_dir)
     state = RunState(run_dir)
 
     logger.info("Loading scope from %s", state.scope_path)
