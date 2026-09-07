@@ -34,6 +34,7 @@ from pathlib import Path
 
 from state import RunState, timed
 from stages.parallelism import bounded_parallel_map, DEFAULT_MAX_WORKERS
+from http_headers import wafw00f_header_file
 
 logger = logging.getLogger(__name__)
 
@@ -89,12 +90,22 @@ def run_cdncheck(hosts: list[str], state: RunState) -> dict[str, dict]:
     return out
 
 
-def run_wafw00f(host: str, base: str, state: RunState) -> dict:
+def run_wafw00f(host: str, base: str, state: RunState, scope: dict | None = None) -> dict:
     """ACTIVE WAF-vendor fingerprint for one host (~2 requests incl. an
-    attack-signature probe). Returns {is_behind_waf, waf_vendor} or {}."""
+    attack-signature probe). Returns {is_behind_waf, waf_vendor} or {}.
+
+    scope carries any program-mandated required_headers (e.g. X-HackerOne). Unlike
+    the other tools, wafw00f takes custom headers from a FILE (-H <file>), and that
+    OVERWRITES its default header set (see http_headers.wafw00f_header_file) — an
+    accepted tradeoff: identifying our traffic per the RoE outranks wafw00f's
+    fingerprint fidelity, and this stage is fault-isolated enrichment."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
         out_path = f.name
-    _stdout, _stderr, _code = _run_tool(["wafw00f", f"{base}", "-a", "-f", "json", "-o", out_path])
+    header_file = wafw00f_header_file(scope or {})
+    cmd = ["wafw00f", f"{base}", "-a", "-f", "json", "-o", out_path]
+    if header_file:
+        cmd += ["-H", header_file]
+    _stdout, _stderr, _code = _run_tool(cmd)
     result = {}
     try:
         data = json.loads(Path(out_path).read_text() or "[]")
@@ -108,6 +119,8 @@ def run_wafw00f(host: str, base: str, state: RunState) -> dict:
         pass
     finally:
         Path(out_path).unlink(missing_ok=True)
+        if header_file:
+            Path(header_file).unlink(missing_ok=True)
     return result
 
 
@@ -126,7 +139,7 @@ def run_waf_cdn(live_hosts: list[str], state: RunState, current_pass: int, scope
         # R7 per-host isolation lives inside bounded_parallel_map).
         def _waf_for(host):
             base = (host_base or {}).get(host) or f"https://{host}"
-            return run_wafw00f(host, base, state)
+            return run_wafw00f(host, base, state, scope)
         waf_results = bounded_parallel_map(_waf_for, live_hosts, workers=WAFW00F_WORKERS,
                                            label="stage 4.5 wafw00f")
         for host in live_hosts:

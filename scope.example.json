@@ -15,5 +15,8 @@
     "source_text": "please limit automated scanning to 5 req/s",
     "extracted_by": "human",
     "resolution": "confirmed"
+  },
+  "required_headers": {
+    "X-HackerOne": "your-h1-username"
   }
 }

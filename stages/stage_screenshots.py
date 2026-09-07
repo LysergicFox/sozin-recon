@@ -23,6 +23,7 @@ from pathlib import Path
 
 from state import RunState, timed
 from rate_limits import httpx_rate_args
+from http_headers import header_args
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,7 @@ def run_screenshots(live_hosts: list[str], state: RunState, scope: dict,
                 "httpx", "-l", targets_path, "-json", "-silent",
                 "-screenshot", "-system-chrome", "-esb",
                 "-srd", str(srd), *rate.extra_args,
+                *header_args(scope),   # program-mandated headers on all target traffic
             ])
         except Exception:
             logger.exception("C2 screenshots failed - none captured this pass (R7)")

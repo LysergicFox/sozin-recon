@@ -57,6 +57,7 @@ from urllib.parse import urlparse
 
 from state import Asset, RunState, timed
 from rate_limits import httpx_rate_args, naabu_rate_args
+from http_headers import header_args
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +141,7 @@ def run_httpx(hosts: list[str], state: RunState, scope: dict) -> tuple[dict[str,
         # asn are present only when available (favicon served / ASN data on box).
         "-favicon", "-body-preview", "-asn", "-cdn", "-jarm",
         *rate.extra_args,
+        *header_args(scope),   # program-mandated headers (e.g. X-HackerOne) on all target traffic
     ])
     state.save_raw(STAGE, "httpx", stdout)
 

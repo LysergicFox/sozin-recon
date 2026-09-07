@@ -106,6 +106,7 @@ from urllib.parse import urlparse
 
 from state import RunState
 from rate_limits import whatweb_rate_args
+from http_headers import header_args
 
 logger = logging.getLogger(__name__)
 
@@ -183,7 +184,8 @@ def _scan_one_host(host: str, state: RunState, scope: dict) -> list[dict]:
     logger.info("whatweb rate limit (%s): %s", host, rate.note)
 
     cmd = ["whatweb", "-a", str(AGGRESSION_LEVEL), FOLLOW_REDIRECT_FLAG,
-           f"--log-json={json_output_path}", *rate.extra_args, host]
+           f"--log-json={json_output_path}", *rate.extra_args,
+           *header_args(scope), host]   # program-mandated headers on all target traffic
     stdout, stderr, code = _run_tool(cmd)
     # archive raw stdout per-host too, filename suffix keeps them distinct
     # in the raw archive rather than one invocation overwriting another

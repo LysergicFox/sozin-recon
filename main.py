@@ -25,6 +25,7 @@ from scope_gate import (
     extract_host,
 )
 from rate_limit_gate import check_run_not_blocked
+from http_headers import required_headers
 from stages.stage1_passive import run_stage1
 from stages.stage3_active_dns import run_stage3
 from stages.stage4_live_probing import run_stage4
@@ -743,6 +744,14 @@ def main():
         logger.error("No in_scope domains found in scope.json - nothing to do")
         sys.exit(1)
     logger.info("Root domains for this run: %s", root_domains)
+
+    # Program-mandated request headers (e.g. HackerOne's X-HackerOne Test Plan
+    # header) are injected into every target-facing tool's requests. Log once so
+    # an operator can confirm the RoE requirement is actually in force this run.
+    _req_headers = required_headers(scope)
+    if _req_headers:
+        logger.info("Injecting %d required header(s) on all target traffic: %s",
+                    len(_req_headers), ", ".join(_req_headers))
 
     # (R7) Any unhandled exception during the run marks run_state "error"
     # (with the failing stage) before re-raising. Pre-run gate refusals

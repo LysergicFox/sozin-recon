@@ -78,7 +78,7 @@ def test_run_waf_cdn_merges_and_isolates():
     cdn = {"wafhost": {"is_behind_waf": True, "waf_name": "cloudflare"},
            "cdnhost": {"is_cdn": True, "cdn_name": "google"}}
 
-    def _waf(host, base, state):
+    def _waf(host, base, state, scope=None):
         if host == "badhost":
             raise RuntimeError("boom")
         if host == "wafhost":

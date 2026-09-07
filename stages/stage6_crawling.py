@@ -79,6 +79,7 @@ from urllib.parse import urlparse
 
 from state import Asset, RunState
 from rate_limits import katana_rate_args
+from http_headers import header_args
 
 logger = logging.getLogger(__name__)
 
@@ -225,6 +226,7 @@ def run_katana(hosts: list[str], state: RunState, scope: dict) -> tuple[dict[str
         "-td",
         "-fs", "rdn",  # (R1, VERIFIED) field-scope = root domain name - stay on the target's own root domain
         *rate.extra_args,
+        *header_args(scope),   # program-mandated headers on all target traffic
     ])
     state.save_raw(STAGE, "katana", stdout)
 

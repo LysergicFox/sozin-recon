@@ -47,6 +47,7 @@ from urllib.parse import urlparse
 
 from state import Asset, RunState, Endpoint, timed
 from rate_limits import ffuf_rate_args
+from http_headers import header_args
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +164,7 @@ def run_ffuf(host: str, state: RunState, scope: dict, base: str | None = None) -
         "-s",                                          # silent: suppress the matched-path stdout echo
         "-t", str(THREADS),
         *ffuf_rate_args(scope).extra_args,             # -rate <n> (true per-host cap)
+        *header_args(scope),                           # program-mandated headers on all target traffic
         # NO -r: do NOT follow redirects (R1 — a 30x is a recorded finding, not a chase)
     ]
     _stdout, stderr, _code = _run_tool(cmd)

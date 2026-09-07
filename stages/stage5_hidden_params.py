@@ -29,6 +29,7 @@ from urllib.parse import urlparse
 
 from state import Asset, RunState, timed, Parameter
 from rate_limits import x8_rate_args
+from http_headers import x8_header_args
 
 logger = logging.getLogger(__name__)
 
@@ -159,6 +160,7 @@ def run_x8(url: str, state: RunState, scope: dict, wordlist: Path = DEFAULT_X8_W
     rate = x8_rate_args(scope)
     logger.info("x8 rate limit (%s): %s", url, rate.note)
     cmd.extend(rate.extra_args)
+    cmd.extend(x8_header_args(scope))   # program-mandated headers on all target traffic
 
     stdout, stderr, code = _run_tool(cmd)
     state.save_raw(STAGE, "x8", stdout)

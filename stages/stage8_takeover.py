@@ -61,6 +61,7 @@ from pathlib import Path
 
 from state import RunState, TakeoverFinding, ReconFinding
 from rate_limits import nuclei_rate_args
+from http_headers import header_args
 
 logger = logging.getLogger(__name__)
 
@@ -131,7 +132,8 @@ def run_nuclei_takeover(hosts: list[str], state: RunState, scope: dict) -> str:
     rate = nuclei_rate_args(scope, host_count=len(hosts))
     logger.info("nuclei takeover rate limit: %s", rate.note)
 
-    cmd = ["nuclei", "-l", targets_path, "-tags", "takeover", "-jsonl", "-silent", *rate.extra_args]
+    cmd = ["nuclei", "-l", targets_path, "-tags", "takeover", "-jsonl", "-silent",
+           *rate.extra_args, *header_args(scope)]   # program-mandated headers on all target traffic
 
     stdout, stderr, code = _run_tool(cmd)
     state.save_raw(STAGE, "nuclei_takeover", stdout)
@@ -205,7 +207,7 @@ def run_nuclei_detection(hosts: list[str], state: RunState, scope: dict) -> str:
     logger.info("nuclei detection rate limit: %s", rate.note)
     cmd = ["nuclei", "-l", targets_path,
            "-tags", DETECTION_INCLUDE_TAGS, "-etags", DETECTION_EXCLUDE_TAGS,
-           "-jsonl", "-silent", *rate.extra_args]
+           "-jsonl", "-silent", *rate.extra_args, *header_args(scope)]   # program-mandated headers on all target traffic
     stdout, stderr, code = _run_tool(cmd)
     state.save_raw(STAGE, "nuclei_detection", stdout)
     Path(targets_path).unlink(missing_ok=True)
