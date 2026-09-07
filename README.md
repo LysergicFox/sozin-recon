@@ -19,6 +19,9 @@ never tests, exploits, uses a credential, or confirms a vulnerability.
 > `rate_limit` block before the pipeline will run. An absent rate-limit block
 > **blocks** the run rather than guessing (fail-closed).
 
+**New here? Start with [QUICKSTART.md](QUICKSTART.md)** — build → scope → run →
+read results, end to end.
+
 ---
 
 ## What it does (pipeline order)

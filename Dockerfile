@@ -15,8 +15,12 @@
 # "never trust a tool's docs — run it" discipline exists to catch).
 
 ########################## Go tools + massdns ##########################
-FROM golang:1.23-bookworm AS gobuild
+FROM golang:1.25-bookworm AS gobuild
 ENV GOBIN=/out
+# GOTOOLCHAIN=auto lets `go install ...@latest` fetch a newer toolchain if a
+# tool's go.mod requires one (the PD suite tracks recent Go closely), so the
+# build doesn't break every time upstream bumps its minimum Go.
+ENV GOTOOLCHAIN=auto
 RUN mkdir -p /out
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git make gcc libpcap-dev ca-certificates \
@@ -37,8 +41,9 @@ RUN go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest \
  && go install github.com/lc/gau/v2/cmd/gau@latest \
  && go install github.com/bp0lr/gauplus@latest \
  && go install github.com/ffuf/ffuf/v2@latest \
- && go install github.com/BishopFox/jsluice/cmd/jsluice@latest \
- && go install github.com/SSLMate/certspotter/cmd/certspotter@latest
+ && go install github.com/BishopFox/jsluice/cmd/jsluice@latest
+# NOTE: "certspotter" is NOT a binary here — stage 1 queries the certspotter
+# HTTPS JSON API (api.certspotter.com) via curl, which the runtime stage ships.
 
 # massdns — puredns's resolution engine (built from source).
 RUN git clone --depth 1 https://github.com/blechschmidt/massdns /tmp/massdns \
