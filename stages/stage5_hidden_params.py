@@ -223,7 +223,19 @@ def run_paramspider(domain: str, state: RunState) -> list[Asset]:
     return assets
 
 
-DEFAULT_X8_WORDLIST = Path.home() / "tools" / "SecLists" / "Discovery" / "Web-Content" / "burp-parameter-names.txt"
+# x8 param wordlist. x8 runs the WHOLE list against EVERY candidate URL, so a big
+# list dominates stage 5 (SecLists burp-parameter-names.txt = 6,453 names ≈
+# ~1 min/endpoint → ginandjuice's ~83 endpoints ≈ ~80 min). We ship a CURATED
+# common-web-param list WITH the repo (wordlists/params_common.txt, ~375 high-
+# signal names incl. camelCase *Id variants) that covers the common params
+# (search/category/postId/page/sort/filter/id/q/…) — the app-specific SecLists
+# "top-55-apps" list (211) MISSES those, so it's not a usable smaller option.
+# Compact + high-coverage keeps stage 5 fast without a coverage regression. For an
+# exhaustive pass on high-interest hosts, swap to SecLists' burp-parameter-names
+# (the deferred two-phase-depth idea). Resolved from the module path so it works
+# both locally and in the /app Docker image.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_X8_WORDLIST = _REPO_ROOT / "wordlists" / "params_common.txt"
 
 
 def run_x8(url: str, state: RunState, scope: dict, wordlist: Path = DEFAULT_X8_WORDLIST) -> list[str]:

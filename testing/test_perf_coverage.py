@@ -158,6 +158,21 @@ def test_x8_candidate_urls_per_host_cap():
     print("PASS: x8_candidate_urls respects MAX_X8_URLS_PER_HOST backstop")
 
 
+def test_x8_wordlist_is_repo_curated_and_covers_common_params():
+    import stage5_hidden_params as m
+    wl = Path(m.DEFAULT_X8_WORDLIST)
+    assert wl.name == "params_common.txt", wl
+    assert wl.exists(), f"shipped x8 wordlist missing: {wl}"
+    names = set(wl.read_text().split())
+    # must cover the common web params the SecLists 211-list missed, incl. the
+    # camelCase postId ginandjuice actually uses (params are case-sensitive).
+    for p in ("search", "category", "postId", "id", "q", "page", "sort", "filter",
+              "redirect", "url", "token", "callback"):
+        assert p in names, f"curated x8 wordlist missing common param: {p}"
+    assert 200 <= len(names) <= 600, f"unexpected wordlist size: {len(names)}"
+    print(f"PASS: shipped x8 wordlist params_common.txt ({len(names)} params) covers the common set")
+
+
 def test_run_x8_parses_dict_found_params():
     """x8's real found_params entries are dicts {name, reason_kind, ...}, not bare
     strings — run_x8 must extract .name (the bug that crashed add_parameters)."""
@@ -206,6 +221,7 @@ if __name__ == "__main__":
     test_stage1_parallel_roots_aggregate_stable_order()
     test_x8_candidate_urls_filtering()
     test_x8_candidate_urls_per_host_cap()
+    test_x8_wordlist_is_repo_curated_and_covers_common_params()
     test_run_x8_parses_dict_found_params()
     test_x8_candidate_urls_skips_destructive()
     print("\nALL perf/coverage TESTS PASSED")
