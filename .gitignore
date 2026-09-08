@@ -9,9 +9,12 @@ venv/
 # must NEVER be committed: stage 7 extracts real secrets, so a committed run
 # dir would leak live-target findings. Keep run directories out of the repo.
 run_*/
-runs/            # the docker-compose mount dir
-test1/           # legacy nested run dir
-*.db             # assets.db
+# the docker-compose mount dir / --target-dir runs live here
+runs/
+# legacy nested run dir
+test1/
+# assets.db and any other sqlite artifacts (real run data / secrets)
+*.db
 raw/
 needs_review.json
 run_state.json
