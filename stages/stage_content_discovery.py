@@ -48,6 +48,7 @@ from urllib.parse import urlparse
 from state import Asset, RunState, Endpoint, timed
 from rate_limits import ffuf_rate_args
 from http_headers import header_args
+from stages.parallelism import bounded_parallel_map, resolve_max_workers
 
 logger = logging.getLogger(__name__)
 
@@ -69,12 +70,24 @@ _SECLISTS_DIR = _os.environ.get(
     _os.path.expanduser("~/tools/SecLists") if _os.path.isdir(_os.path.expanduser("~/tools/SecLists"))
     else "/usr/share/seclists",
 )
-WORDLIST_PATH = _os.path.join(_SECLISTS_DIR, "Discovery/Web-Content/raft-medium-directories.txt")
+WORDLIST_PATH = _os.path.join(_SECLISTS_DIR, "Discovery/Web-Content/quickhits.txt")
 
-# Extension permutations appended to each FUZZ word (ffuf -e). Includes .js so the
-# stage-7 jsluice same-pass chain is real, plus common leak/backup/config suffixes.
-EXTENSIONS = [".js", ".json", ".txt", ".bak", ".old", ".zip", ".tar.gz",
-              ".env", ".config", ".swp"]
+# Extension permutations appended to each FUZZ word (ffuf -e).
+#
+# Coverage right-size (2026-09-07, RECON_PERF_COVERAGE_FINDINGS): ffuf sends
+# (1 + len(EXTENSIONS)) requests PER wordlist entry, so extensions multiply the
+# request count. Under a per-host budget of ~rate x -maxtime-job (e.g. 2 req/s x
+# 1200 s = 2,400 requests), a big dir-name list x 10 extensions blows the budget
+# by ~100x and only ~1% of the space is ever tested.
+#
+# quickhits.txt is a list of COMPLETE, specific high-signal paths (.git/config,
+# .env, .htpasswd, ...), not directory stems you append extensions to — so it is
+# used WITHOUT -e. ~2,570 complete paths ≈ the budget → near-full coverage of a
+# high-signal list instead of a sliver of a huge one. Extensions belong with a
+# directory-name list (raft-medium-directories): if you repoint WORDLIST_PATH at
+# one, restore a suitable EXTENSIONS set here and the -e flag returns automatically
+# (it is emitted only when EXTENSIONS is non-empty — see run_ffuf()).
+EXTENSIONS: list[str] = []
 
 # ffuf's stderr early-stop signals (exit code is 0 in BOTH cases — verified).
 _WAF_403_FLOOD_SIGNAL = "unusual amount of 403 responses"
@@ -154,7 +167,9 @@ def run_ffuf(host: str, state: RunState, scope: dict, base: str | None = None) -
         "ffuf",
         "-u", seed,
         "-w", WORDLIST_PATH,
-        "-e", ",".join(EXTENSIONS),
+        # -e only when EXTENSIONS is non-empty (quickhits ships complete paths, so
+        # extensions are off; a directory-name list would set them — see EXTENSIONS).
+        *(["-e", ",".join(EXTENSIONS)] if EXTENSIONS else []),
         "-recursion", "-recursion-depth", str(RECURSION_DEPTH),
         "-ac",                                         # auto-calibrate soft-404 / catch-all
         "-sf",                                         # stop on 403 flood (WAF breaker)
@@ -208,13 +223,19 @@ def run_content_discovery(live_hosts: list[str], state: RunState, current_pass: 
     endpoints: list[Endpoint] = []
     waf_flags: dict[str, dict] = {}
 
+    # Parallelize ffuf across DISTINCT hosts (each keeps its own per-host -rate; the
+    # helper is R3-correct by construction and R7-isolates a per-host failure). The
+    # network-bound ffuf runs concurrently; hit processing below stays serial.
+    workers = resolve_max_workers(scope)
     with timed(state, "stage6_5.ffuf_total"):
+        def _ffuf_one(host):
+            return run_ffuf(host, state, scope, base=(host_base or {}).get(host))
+        per_host = bounded_parallel_map(_ffuf_one, live_hosts, workers=workers,
+                                        label="stage 6.5 ffuf")
         for host in live_hosts:
-            try:
-                hits, waf = run_ffuf(host, state, scope, base=(host_base or {}).get(host))
-            except Exception:
-                logger.exception("stage 6.5 ffuf failed for %s - skipping this host (R7)", host)
-                continue                               # one host failing ≠ kill the stage
+            if host not in per_host:
+                continue                               # failed + logged in the helper (R7)
+            hits, waf = per_host[host]
             waf_flags[host] = waf
             for h in hits:
                 url = h.get("url")

@@ -41,6 +41,7 @@ import time
 from pathlib import Path
 
 from state import Asset, RunState
+from stages.parallelism import bounded_parallel_map, resolve_max_workers
 
 logger = logging.getLogger(__name__)
 
@@ -415,7 +416,12 @@ def _parse_amass_relationships(stdout: str, root_domain: str) -> list[Asset]:
 
 
 AMASS_EXTERNAL_TIMEOUT_SECONDS = 600  # hard external kill via _run_tool()
-AMASS_INTERNAL_TIMEOUT_MINUTES = 8    # amass's own -timeout, self-imposed ceiling
+AMASS_INTERNAL_TIMEOUT_MINUTES = 3    # amass's own -timeout, self-imposed ceiling
+# Lowered 8->3 (2026-09-07, RECON_PERF_COVERAGE_FINDINGS): on big roots amass ran
+# to its full ceiling for a long-tail of third-party sources while adding few
+# assets subfinder/assetfinder didn't already have (observed: amass +60 where the
+# others already had 250+). 3 min captures the high-value sources at a fraction of
+# the wall-clock. AMASS_EXTERNAL_TIMEOUT_SECONDS remains the hard-kill backstop.
 
 
 def run_amass(domain: str, state: RunState) -> list[Asset]:
@@ -694,27 +700,42 @@ TOOL_RUNNERS = [
 ]
 
 
-def run_stage1(root_domains: list[str], state: RunState, current_pass: int) -> list[Asset]:
+def run_stage1(root_domains: list[str], state: RunState, current_pass: int,
+               scope: dict | None = None) -> list[Asset]:
     """
     Run all stage 1 tools against every root domain in scope, normalize,
     and return the combined asset list (with discovered_in_pass corrected
     to the actual current pass number - each runner stubs it to 1).
     Does NOT write to assets.json itself - that's the caller's job via
     state.add_assets(), after scope classification happens.
-    """
-    all_assets: list[Asset] = []
 
-    for domain in root_domains:
+    Roots run in PARALLEL (bounded by performance.max_workers). This is RoE-free:
+    stage 1 is entirely passive — every tool queries THIRD-PARTY data sources
+    (subfinder/assetfinder/amass/gau/waybackurls + the certspotter API), never the
+    target — so fanning out across roots adds no target traffic. Thread-safe:
+    each runner only returns assets and writes a per-domain-suffixed raw archive
+    (unique path), with no shared-state mutation (add_assets happens later, in the
+    caller). A per-domain failure is isolated by the helper (R7).
+    """
+    def _collect(domain: str) -> list[Asset]:
+        found_for_domain: list[Asset] = []
         for runner in TOOL_RUNNERS:
             try:
                 found = runner(domain, state)
                 for a in found:
                     a.discovered_in_pass = current_pass
-                all_assets.extend(found)
+                found_for_domain.extend(found)
                 logger.info("%s found %d assets for %s", runner.__name__, len(found), domain)
             except Exception:
                 logger.exception("Stage 1 tool %s failed for domain %s", runner.__name__, domain)
-                # one tool failing shouldn't kill the whole stage - continue with the rest
+                # one tool failing shouldn't kill this root - continue with the rest
                 continue
+        return found_for_domain
 
+    per_domain = bounded_parallel_map(_collect, root_domains,
+                                      workers=resolve_max_workers(scope or {}),
+                                      label="stage 1 passive (per root)")
+    all_assets: list[Asset] = []
+    for domain in root_domains:                       # stable order regardless of completion order
+        all_assets.extend(per_domain.get(domain, []))
     return all_assets

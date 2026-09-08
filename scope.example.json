@@ -18,5 +18,8 @@
   },
   "required_headers": {
     "X-HackerOne": "your-h1-username"
+  },
+  "performance": {
+    "max_workers": 5
   }
 }

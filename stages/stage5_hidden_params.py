@@ -27,9 +27,12 @@ import tempfile
 from pathlib import Path
 from urllib.parse import urlparse
 
+from collections import defaultdict
+
 from state import Asset, RunState, timed, Parameter
 from rate_limits import x8_rate_args
 from http_headers import x8_header_args
+from stages.parallelism import bounded_parallel_map, resolve_max_workers
 
 logger = logging.getLogger(__name__)
 
@@ -231,17 +234,26 @@ def run_stage5(root_domains: list[str], live_urls: list[str],
                 logger.exception("Stage 5 paramspider failed for domain %s", domain)
                 continue
 
-    parameters: list[Parameter] = []
-    with timed(state, "stage5.x8_total"):
-        for url in live_urls:
+    # x8 is ACTIVE (it fuzzes params against the target) and multiple live URLs can
+    # share a host, so we CANNOT flat-parallelize across URLs — that would run two
+    # x8 processes at one host and blow its per-host rate. Instead group URLs by
+    # host and parallelize across DISTINCT hosts, keeping a single host's URLs
+    # serial (each host still sees only its own x8 rate; aggregate = workers x rate
+    # across distinct hosts, the same model as the other parallel stages).
+    urls_by_host: dict[str, list[str]] = defaultdict(list)
+    for url in live_urls:
+        urls_by_host[urlparse(url).hostname or ""].append(url)
+
+    def _x8_for_host(host: str) -> list[Parameter]:
+        host_params: list[Parameter] = []
+        for url in urls_by_host[host]:                 # serial within one host
             try:
                 params = run_x8(url, state, scope)
             except Exception:
                 logger.exception("Stage 5 x8 failed for url %s", url)
                 continue
-            host = urlparse(url).hostname or ""
             for name in params:
-                parameters.append(Parameter(
+                host_params.append(Parameter(
                     name=name,
                     host=host,
                     endpoint=url,
@@ -253,6 +265,15 @@ def run_stage5(root_domains: list[str], live_urls: list[str],
                     discovered_at_stage=STAGE,
                     discovered_in_pass=current_pass,
                 ))
+        return host_params
+
+    parameters: list[Parameter] = []
+    with timed(state, "stage5.x8_total"):
+        per_host = bounded_parallel_map(_x8_for_host, list(urls_by_host.keys()),
+                                        workers=resolve_max_workers(scope),
+                                        label="stage 5 x8 (per host)")
+    for host in urls_by_host:
+        parameters.extend(per_host.get(host, []))
 
     metadata_updates: dict[str, dict] = {}
     return new_assets, metadata_updates, {"parameters": parameters}

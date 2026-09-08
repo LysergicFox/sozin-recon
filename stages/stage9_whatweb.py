@@ -107,6 +107,7 @@ from urllib.parse import urlparse
 from state import RunState
 from rate_limits import whatweb_rate_args
 from http_headers import header_args
+from stages.parallelism import bounded_parallel_map, resolve_max_workers
 
 logger = logging.getLogger(__name__)
 
@@ -233,13 +234,17 @@ def run_whatweb(hosts: list[str], state: RunState, scope: dict) -> dict[str, lis
     scope is the loaded scope.json dict, threaded through to
     _scan_one_host() for rate-limit resolution.
     """
-    results_by_host: dict[str, list[dict]] = {}
+    # Parallelize across DISTINCT hosts (each keeps its own per-host rate; whatweb
+    # writes to a per-call NamedTemporaryFile so there's no cross-host collision).
+    def _scan(host):
+        return _scan_one_host(host, state, scope)
+    results_by_host = bounded_parallel_map(_scan, hosts,
+                                           workers=resolve_max_workers(scope),
+                                           label="stage 9 whatweb")
+    # The helper R7-skips a failed host (no key); restore the "every host present,
+    # empty list on failure" contract the rest of the stage relies on.
     for host in hosts:
-        try:
-            results_by_host[host] = _scan_one_host(host, state, scope)
-        except Exception:
-            logger.exception("stage 9 whatweb scan failed for host %s - continuing (R7)", host)
-            results_by_host[host] = []
+        results_by_host.setdefault(host, [])
 
     total_entries = sum(len(r) for r in results_by_host.values())
     logger.info("whatweb scanned %d host(s) individually, got %d total result entr(y/ies) (including redirect hops)",

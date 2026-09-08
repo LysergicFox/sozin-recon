@@ -20,6 +20,25 @@ logger = logging.getLogger(__name__)
 DEFAULT_MAX_WORKERS = 5
 
 
+def resolve_max_workers(scope: dict) -> int:
+    """Per-run parallelism dial from scope.json's optional `performance` block:
+
+        "performance": { "max_workers": 5 }
+
+    Controls how many DISTINCT hosts run concurrently across the per-host stages.
+    Per-host rate is unchanged; the aggregate to the org's shared infra is
+    workers x per_host_rate, spread across that many distinct hostnames — an
+    explicit, per-engagement RoE dial (see RECON_PERF_COVERAGE_FINDINGS). Absent/
+    invalid -> DEFAULT_MAX_WORKERS. Clamped to >=1 (0/negative would stall)."""
+    perf = (scope or {}).get("performance") or {}
+    n = perf.get("max_workers", DEFAULT_MAX_WORKERS)
+    if not isinstance(n, int) or n < 1:
+        logger.warning("performance.max_workers=%r invalid - using default %d",
+                       n, DEFAULT_MAX_WORKERS)
+        return DEFAULT_MAX_WORKERS
+    return n
+
+
 def bounded_parallel_map(fn, items, workers: int = DEFAULT_MAX_WORKERS, label: str = "task") -> dict:
     """Run fn(item) across items with a bounded thread pool. Returns {item: result}
     for successes; a per-item failure is logged and skipped (R7). Order-independent."""

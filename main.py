@@ -612,7 +612,7 @@ def run_pipeline(root_domains: list[str], patterns: ScopePatterns, state: RunSta
     state.update_run_state(current_stage=1, current_pass=1, status="running")
 
     logger.info("--- Stage 1: passive discovery ---")
-    stage1_found = run_stage1(root_domains, state, current_pass=1)
+    stage1_found = run_stage1(root_domains, state, current_pass=1, scope=scope)
     run_stage_and_report(1, "passive discovery", stage1_found, patterns, state)
 
     all_assets = state.load_assets()
