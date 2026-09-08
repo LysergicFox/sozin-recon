@@ -949,6 +949,22 @@ class RunState:
             json.dump(state, f, indent=2)
         return state
 
+    def clear_run_error(self) -> dict:
+        """Remove any error/failed_at_stage keys left by a prior attempt.
+
+        update_run_state() is merge-only, so a run re-run into a dirty dir would
+        otherwise inherit a stale error from the earlier failed attempt (a clean
+        re-run showed status=stage_complete AND a leftover failed_at_stage=5).
+        Called at run start so every fresh run begins with no error state.
+        """
+        state = self.load_run_state()
+        state.pop("failed_at_stage", None)
+        state.pop("error", None)
+        state["last_updated"] = now_iso()
+        with open(self.run_state_path, "w") as f:
+            json.dump(state, f, indent=2)
+        return state
+
     def record_timing(self, key: str, duration_seconds: float) -> None:
         state = self.load_run_state()
         timings = state.get("timings", {})

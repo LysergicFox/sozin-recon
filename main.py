@@ -610,6 +610,9 @@ def run_pipeline(root_domains: list[str], patterns: ScopePatterns, state: RunSta
     wrap it in the R7 error-status guard.
     """
     state.update_run_state(current_stage=1, current_pass=1, status="running")
+    # A run re-run into an existing dir must not inherit a prior attempt's error
+    # (update_run_state is merge-only). Start clean.
+    state.clear_run_error()
 
     logger.info("--- Stage 1: passive discovery ---")
     stage1_found = run_stage1(root_domains, state, current_pass=1, scope=scope)
