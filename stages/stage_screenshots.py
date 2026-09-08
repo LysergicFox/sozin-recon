@@ -28,7 +28,8 @@ from http_headers import header_args
 logger = logging.getLogger(__name__)
 
 STAGE = 9  # runs alongside the stage-9 per-host fingerprinting band (metadata only)
-SCREENSHOT_TIMEOUT_SECONDS = 900
+SCREENSHOT_TIMEOUT_SECONDS = 900       # whole-invocation subprocess kill (all hosts)
+SCREENSHOT_RENDER_TIMEOUT_SECONDS = 30  # httpx per-page -st (default 10s is too short for heavy pages)
 
 
 def _run_tool(cmd, timeout=SCREENSHOT_TIMEOUT_SECONDS):
@@ -53,8 +54,9 @@ def run_screenshots(live_hosts: list[str], state: RunState, scope: dict,
         return {}
     srd = state.run_dir / "screenshots"
     with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
-        # screenshot the confirmed-live ORIGIN (scheme from httpx_final_url, like B1/B2)
-        f.write("\n".join((host_base or {}).get(h) or f"https://{h}" for h in live_hosts))
+        # screenshot the confirmed-live ORIGIN (scheme from httpx_final_url, like
+        # B1/B2). rstrip a trailing slash as harmless origin normalization.
+        f.write("\n".join(((host_base or {}).get(h) or f"https://{h}").rstrip("/") for h in live_hosts))
         targets_path = f.name
 
     rate = httpx_rate_args(scope, host_count=len(live_hosts))
@@ -65,6 +67,11 @@ def run_screenshots(live_hosts: list[str], state: RunState, scope: dict,
             stdout, _stderr, _code = _run_tool([
                 "httpx", "-l", targets_path, "-json", "-silent",
                 "-screenshot", "-system-chrome", "-esb",
+                # (2026-09-08) heavy pages intermittently produced a 0-byte PNG at
+                # httpx's default 10s screenshot timeout (observed on ginandjuice.shop);
+                # a longer render timeout renders them reliably. The 0-byte guard
+                # below is the safety net for whatever still fails.
+                "-st", str(SCREENSHOT_RENDER_TIMEOUT_SECONDS),
                 "-srd", str(srd), *rate.extra_args,
                 *header_args(scope),   # program-mandated headers on all target traffic
             ])
@@ -94,6 +101,16 @@ def run_screenshots(live_hosts: list[str], state: RunState, scope: dict,
         # host may be a URL (we seeded origins) — normalize to the bare host key
         from urllib.parse import urlparse
         key = urlparse(host).hostname or host
+        # (2026-09-08) httpx can report a screenshot_path while writing a 0-byte PNG
+        # (a render failure it doesn't surface). Don't record a phantom screenshot —
+        # verify the file exists and is non-empty first.
+        try:
+            if (state.run_dir / rel).stat().st_size == 0:
+                logger.warning("C2: screenshot for %s is 0 bytes (render failed) - not recording", key)
+                continue
+        except OSError:
+            logger.warning("C2: screenshot file for %s missing (%s) - not recording", key, rel)
+            continue
         updates[key] = {"screenshot_path": rel}
 
     logger.info("C2 screenshots: captured %d screenshot(s)", len(updates))
