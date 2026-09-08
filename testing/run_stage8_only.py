@@ -45,7 +45,7 @@ def main():
     # load_scope() also enforces verified_by_human, same guard every other
     # entrypoint (main.py, run_stage5_only.py, run_stage7_only.py) applies
     # before touching a run directory
-    state.load_scope()
+    scope = state.load_scope()
 
     existing_hosts = [
         a for a in state.load_assets()
@@ -62,7 +62,7 @@ def main():
     logger.info("Found %d existing in_scope host(s) in assets.db - proceeding with stage 8 only",
                 len(existing_hosts))
 
-    run_stage8_and_report(state)
+    run_stage8_and_report(state, scope)
 
     findings = state.load_takeover_findings()
     logger.info("Stage 8 complete. %d total takeover finding(s) now in %s",

@@ -56,7 +56,7 @@ def main():
     scope = state.load_scope()
     patterns = ScopePatterns.from_scope_dict(scope)
 
-    run_stage7_and_report(patterns, state)
+    run_stage7_and_report(patterns, state, scope)
 
     logger.info("Stage 7 re-run complete. See %s and %s", state.assets_db_path, state.review_path)
 

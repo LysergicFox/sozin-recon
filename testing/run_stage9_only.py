@@ -45,7 +45,7 @@ def main():
     # load_scope() also enforces verified_by_human, same guard every other
     # entrypoint (main.py, run_stage5_only.py, run_stage7_only.py,
     # run_stage8_only.py) applies before touching a run directory
-    state.load_scope()
+    scope = state.load_scope()
 
     live_hosts = [
         a for a in state.load_assets()
@@ -65,7 +65,7 @@ def main():
     logger.info("Found %d confirmed-live in_scope host(s) in assets.db - proceeding with stage 9 only",
                 len(live_hosts))
 
-    run_stage9_and_report(state)
+    run_stage9_and_report(state, scope)
 
     # quick summary: how many hosts now carry whatweb_tech
     updated = [
