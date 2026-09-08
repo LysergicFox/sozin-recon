@@ -213,6 +213,23 @@ Expected combined effect (illustrative, 200 live hosts): content discovery
 
 ---
 
+## Known follow-ups (surfaced by the ginandjuice.shop run, not yet fixed)
+
+- [ ] **Malformed / crawl-noise URLs enter `assets.db`.** gau/waybackurls (and
+  katana) yield junk "URLs" — HTML fragments like `/%3C/a%3E` (`</a>`),
+  `/)%3C/a%3E`, stray `/)`, backslash paths — which get scope-gated and stored as
+  `url` assets, bloating the graph and every downstream consumer. Stage 5 now
+  *skips* them for x8 (via `x8_candidate_urls`), but the real fix is to filter/
+  reject them at **ingestion / canonicalization** so they never enter the DB at
+  all. Needs its own small design (where to draw the "is this a plausible URL
+  path" line without dropping legitimate odd paths). **To fix soon.**
+- [ ] **Stage 7 JS extraction not yet parallelized** (excluded from the perf pass:
+  its jsluice fetches aren't distinct hosts and jsluice has no rate flag). Confirm
+  on a JS-heavy target whether it's the next serial bottleneck and design a
+  host-safe fix if so (host-grouped like stage 5, or a jsluice-level rate cap).
+
+---
+
 ## Appendix — key constants & their homes
 
 - `stages/stage_content_discovery.py:56` `MAXTIME_JOB_SECONDS = 1200`

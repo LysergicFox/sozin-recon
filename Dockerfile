@@ -34,6 +34,7 @@ RUN go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest \
  && go install github.com/projectdiscovery/katana/cmd/katana@latest \
  && go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest \
  && go install github.com/projectdiscovery/alterx/cmd/alterx@latest \
+ && go install github.com/projectdiscovery/cdncheck/cmd/cdncheck@latest \
  && go install github.com/d3mondev/puredns/v2@latest \
  && go install github.com/owasp-amass/amass/v4/...@master \
  && go install github.com/tomnomnom/assetfinder@latest \

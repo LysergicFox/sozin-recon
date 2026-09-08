@@ -21,8 +21,11 @@ are returned to the caller (main.py), which scope-gates the assets and
 persists the records.
 """
 
+import hashlib
 import json
 import logging
+import os
+import re
 import tempfile
 from pathlib import Path
 from urllib.parse import urlparse
@@ -38,6 +41,93 @@ logger = logging.getLogger(__name__)
 
 STAGE = 5
 DEFAULT_TIMEOUT_SECONDS = 300
+
+# --- x8 input right-sizing (2026-09-07, RECON_PERF_COVERAGE_FINDINGS) ---------
+# The first content-rich run (ginandjuice.shop) seeded x8 with 177 live URLs on a
+# single host, run serially → ~2.5h, much of it wasted: x8 fuzzes QUERY-param
+# NAMES from a wordlist, so it is pointless against static assets (they don't
+# process params) and redundant across many URLs sharing one path/handler. These
+# reduce x8's input to the URLs actually worth fuzzing.
+
+# Static / non-param-processing extensions x8 should skip. .js is handled by
+# jsluice (stage 7), not param-fuzzed here.
+_X8_SKIP_EXTENSIONS = {
+    ".js", ".css", ".map", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico",
+    ".webp", ".avif", ".bmp", ".woff", ".woff2", ".ttf", ".eot", ".otf",
+    ".mp4", ".webm", ".mp3", ".wav", ".ogg", ".pdf", ".zip", ".gz", ".tar",
+    ".rss", ".xml", ".txt",
+}
+# Substrings that mark a crawl/history-noise "URL" (HTML fragments, backslashes)
+# that isn't a real endpoint — e.g. gau/wayback returned `/%3C/a%3E` (</a>).
+_X8_NOISE_MARKERS = ("<", ">", "\\", "%3c", "%3e", "%5c")
+# SAFETY: path tokens that signal a state-changing/destructive handler. recon is
+# non-destructive by contract, but x8 (and any active GET probe) can TRIGGER a
+# state change if the app acts on GET (a common anti-pattern) — e.g. a GET to
+# /users/delete/carlos deleting the user. We do NOT actively fuzz these; they're
+# recorded as endpoints elsewhere but left for the (guarded) exploitation layer.
+# Matched as whole path segments (so "deleted_at" or "undeletable" don't trip it).
+_DESTRUCTIVE_PATH_TOKENS = frozenset({
+    "delete", "remove", "destroy", "drop", "purge", "wipe", "erase",
+    "logout", "signout", "deactivate", "disable", "revoke", "reset",
+    "ban", "unban", "cancel", "terminate", "kill", "shutdown", "unsubscribe",
+    "deregister", "unregister", "reboot", "restart",
+})
+
+
+_WORD_RE = re.compile(r"[a-z0-9]+")
+
+
+def _has_destructive_segment(path: str) -> bool:
+    """True if any WORD in the path is a known state-changing action token (see
+    _DESTRUCTIVE_PATH_TOKENS). Words are split on / and -_. so compound segments
+    like 'reset-password' or 'delete-account' trip, while 'deleted_at' (→ deleted)
+    and 'undeletable' do NOT (they're not the exact token 'delete'/'reset')."""
+    return any(w in _DESTRUCTIVE_PATH_TOKENS for w in _WORD_RE.findall(path.lower()))
+# Backstop cap on distinct x8 targets per host after filtering/dedup (a pathological
+# host shouldn't reintroduce the serial explosion). Generous; logs when it clamps.
+MAX_X8_URLS_PER_HOST = 100
+
+
+def _sanitize(text: str) -> str:
+    """Filesystem-safe token for per-target raw-archive filenames (R5), mirroring
+    stage 1/3/9's helpers so x8/paramspider raw files don't overwrite each other."""
+    return re.sub(r"[^A-Za-z0-9._-]", "_", text)
+
+
+def x8_candidate_urls(live_urls: list[str]) -> list[str]:
+    """Reduce the raw live-URL set to those worth x8 param-fuzzing:
+      - drop static assets (extension) and crawl-noise fragments;
+      - DEDUPE by (host, path): x8 discovers reflected param NAMES from a wordlist,
+        so many URLs sharing one path/handler are redundant — one representative
+        (first-seen) per (host, path) suffices, and the existing query string does
+        not change which new param names the handler accepts;
+      - cap per host at MAX_X8_URLS_PER_HOST as a backstop.
+    Order-preserving (first-seen representative kept)."""
+    seen_paths: set[tuple[str, str]] = set()
+    per_host: dict[str, int] = defaultdict(int)
+    out: list[str] = []
+    for url in live_urls:
+        low = url.lower()
+        if any(m in low for m in _X8_NOISE_MARKERS):
+            continue
+        parsed = urlparse(url)
+        host = parsed.hostname or ""
+        path = parsed.path or "/"
+        if _has_destructive_segment(path):
+            logger.info("x8: SKIP %s - path signals a state-changing action; recon "
+                        "does not actively probe destructive endpoints", url)
+            continue
+        if os.path.splitext(path)[1].lower() in _X8_SKIP_EXTENSIONS:
+            continue
+        key = (host, path)
+        if key in seen_paths:
+            continue
+        if per_host[host] >= MAX_X8_URLS_PER_HOST:
+            continue
+        seen_paths.add(key)
+        per_host[host] += 1
+        out.append(url)
+    return out
 
 
 def _run_tool(cmd: list[str], timeout: int = DEFAULT_TIMEOUT_SECONDS, input_text: str | None = None) -> tuple[str, str, int]:
@@ -115,7 +205,7 @@ def run_paramspider(domain: str, state: RunState) -> list[Asset]:
             )
             raw_output = ""
 
-    state.save_raw(STAGE, "paramspider", raw_output)
+    state.save_raw(STAGE, f"paramspider_{_sanitize(domain)}", raw_output)   # (R5) per-target
 
     assets = []
     for line in raw_output.splitlines():
@@ -166,7 +256,12 @@ def run_x8(url: str, state: RunState, scope: dict, wordlist: Path = DEFAULT_X8_W
     cmd.extend(x8_header_args(scope))   # program-mandated headers on all target traffic
 
     stdout, stderr, code = _run_tool(cmd)
-    state.save_raw(STAGE, "x8", stdout)
+    # (R5) per-target raw filename so each URL's x8 output is preserved instead of
+    # every run overwriting a single stage5_x8.json. Readable host + short URL hash
+    # (the deduped candidate set already guarantees one URL per (host, path)).
+    _p = urlparse(url)
+    _tag = f"{_sanitize(_p.hostname or 'url')}_{hashlib.sha1(url.encode()).hexdigest()[:8]}"
+    state.save_raw(STAGE, f"x8_{_tag}", stdout)
 
     if not stdout.strip():
         return []
@@ -193,7 +288,15 @@ def run_x8(url: str, state: RunState, scope: dict, wordlist: Path = DEFAULT_X8_W
     for result in results:
         if not isinstance(result, dict):
             continue
-        for name in result.get("found_params") or []:
+        for entry in result.get("found_params") or []:
+            # x8's real found_params entries are DICTS, e.g.
+            #   {"name": "category", "value": null, "diffs": "", "status": 200,
+            #    "size": 11340, "reason_kind": "Reflected"}
+            # (verified against real x8 output vs ginandjuice.shop, 2026-09-08 —
+            # the original code assumed bare strings, which crashed add_parameters
+            # with "type 'dict' is not supported" the first time x8 found anything).
+            # Extract the name; tolerate a bare string too (defensive).
+            name = entry.get("name") if isinstance(entry, dict) else entry
             if name:
                 params.append(name)
 
@@ -234,14 +337,21 @@ def run_stage5(root_domains: list[str], live_urls: list[str],
                 logger.exception("Stage 5 paramspider failed for domain %s", domain)
                 continue
 
-    # x8 is ACTIVE (it fuzzes params against the target) and multiple live URLs can
-    # share a host, so we CANNOT flat-parallelize across URLs — that would run two
-    # x8 processes at one host and blow its per-host rate. Instead group URLs by
-    # host and parallelize across DISTINCT hosts, keeping a single host's URLs
+    # Right-size x8's input first: drop static assets + crawl-noise and dedupe by
+    # (host, path) so we fuzz each real handler once instead of every historical
+    # URL (the ginandjuice run seeded 177 URLs on one host, ~2.5h, mostly waste).
+    x8_urls = x8_candidate_urls(live_urls)
+    logger.info("x8: %d live URL(s) → %d candidate(s) after dropping static/noise + "
+                "deduping by (host, path)", len(live_urls), len(x8_urls))
+
+    # x8 is ACTIVE (it fuzzes params against the target) and multiple candidate URLs
+    # can still share a host, so we CANNOT flat-parallelize across URLs — that would
+    # run two x8 processes at one host and blow its per-host rate. Instead group URLs
+    # by host and parallelize across DISTINCT hosts, keeping a single host's URLs
     # serial (each host still sees only its own x8 rate; aggregate = workers x rate
     # across distinct hosts, the same model as the other parallel stages).
     urls_by_host: dict[str, list[str]] = defaultdict(list)
-    for url in live_urls:
+    for url in x8_urls:
         urls_by_host[urlparse(url).hostname or ""].append(url)
 
     def _x8_for_host(host: str) -> list[Parameter]:

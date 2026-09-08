@@ -124,6 +124,79 @@ def test_stage1_parallel_roots_aggregate_stable_order():
     print("PASS: stage 1 parallel roots aggregate all roots in stable order")
 
 
+def test_x8_candidate_urls_filtering():
+    import stage5_hidden_params as m
+    urls = [
+        "https://a.example.com/search?q=1",     # keep (first search)
+        "https://a.example.com/search?q=2",      # drop (dup path)
+        "https://a.example.com/search?foo=bar",  # drop (dup path)
+        "https://a.example.com/app.js",          # drop (static .js)
+        "https://a.example.com/logo.png",        # drop (static)
+        "https://a.example.com/%3C/a%3E",        # drop (crawl noise)
+        "https://a.example.com/api/users",       # keep (distinct path)
+        "https://b.example.com/search?q=1",      # keep (diff host, same path)
+    ]
+    got = m.x8_candidate_urls(urls)
+    assert got == [
+        "https://a.example.com/search?q=1",
+        "https://a.example.com/api/users",
+        "https://b.example.com/search?q=1",
+    ], got
+    print("PASS: x8_candidate_urls drops static/noise, dedupes by (host,path), keeps first-seen")
+
+
+def test_x8_candidate_urls_per_host_cap():
+    import stage5_hidden_params as m
+    orig = m.MAX_X8_URLS_PER_HOST
+    try:
+        m.MAX_X8_URLS_PER_HOST = 2
+        urls = [f"https://h.example.com/p{i}" for i in range(5)]   # 5 distinct paths
+        got = m.x8_candidate_urls(urls)
+        assert len(got) == 2, got                                   # clamped to the cap
+    finally:
+        m.MAX_X8_URLS_PER_HOST = orig
+    print("PASS: x8_candidate_urls respects MAX_X8_URLS_PER_HOST backstop")
+
+
+def test_run_x8_parses_dict_found_params():
+    """x8's real found_params entries are dicts {name, reason_kind, ...}, not bare
+    strings — run_x8 must extract .name (the bug that crashed add_parameters)."""
+    import stage5_hidden_params as m
+    # realistic x8 -O json stdout: human preamble, then a JSON array of results,
+    # each with found_params as a list of DICTS.
+    x8_stdout = (
+        "x8 vX.Y\nchecking https://a.example.com ...\n"
+        '[{"found_params": ['
+        '{"name": "category", "value": null, "reason_kind": "Reflected", "status": 200},'
+        '{"name": "q", "value": null, "reason_kind": "Code", "status": 200}'
+        ']}]'
+    )
+    with mock.patch.object(m, "_run_tool", return_value=(x8_stdout, "", 0)):
+        names = m.run_x8("https://a.example.com/search", fresh_state(), {})
+    assert names == ["category", "q"], names   # names extracted, no dicts leak through
+    print("PASS: run_x8 extracts names from dict found_params (no more add_parameters crash)")
+
+
+def test_x8_candidate_urls_skips_destructive():
+    import stage5_hidden_params as m
+    urls = [
+        "https://a.example.com/search?q=1",            # keep
+        "https://a.example.com/users/delete/carlos",    # DROP (delete segment)
+        "https://a.example.com/account/deactivate",      # DROP
+        "https://a.example.com/auth/reset-password",     # DROP (compound word)
+        "https://a.example.com/posts/deleted_at",        # keep ('deleted' != 'delete')
+        "https://a.example.com/undeletable-widget",      # keep (not the token)
+    ]
+    got = m.x8_candidate_urls(urls)
+    assert got == [
+        "https://a.example.com/search?q=1",
+        "https://a.example.com/posts/deleted_at",
+        "https://a.example.com/undeletable-widget",
+    ], got
+    print("PASS: x8_candidate_urls skips destructive paths (delete/deactivate/reset-password), "
+          "keeps deleted_at / undeletable")
+
+
 if __name__ == "__main__":
     test_resolve_max_workers()
     test_ffuf_wordlist_and_no_extensions()
@@ -131,4 +204,8 @@ if __name__ == "__main__":
     test_content_discovery_parallel_aggregates_all_hosts()
     test_stage5_x8_host_grouping()
     test_stage1_parallel_roots_aggregate_stable_order()
+    test_x8_candidate_urls_filtering()
+    test_x8_candidate_urls_per_host_cap()
+    test_run_x8_parses_dict_found_params()
+    test_x8_candidate_urls_skips_destructive()
     print("\nALL perf/coverage TESTS PASSED")
