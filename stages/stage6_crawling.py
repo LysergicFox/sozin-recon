@@ -80,6 +80,7 @@ from urllib.parse import urlparse
 from state import Asset, RunState
 from rate_limits import katana_rate_args
 from http_headers import header_args
+from destructive_paths import crawl_out_scope_regex
 
 logger = logging.getLogger(__name__)
 
@@ -225,6 +226,12 @@ def run_katana(hosts: list[str], state: RunState, scope: dict) -> tuple[dict[str
         "-kf", "all",
         "-td",
         "-fs", "rdn",  # (R1, VERIFIED) field-scope = root domain name - stay on the target's own root domain
+        # SAFETY: never FOLLOW a link whose path names a state-changing action
+        # (delete/logout/reset-password/…). katana follows app-provided, often
+        # already-tokened URLs, so following one can complete the action; -cos
+        # (crawl-out-scope) excludes them from being crawled. Shared token set with
+        # the x8 guard (destructive_paths).
+        "-cos", crawl_out_scope_regex(),
         *rate.extra_args,
         *header_args(scope),   # program-mandated headers on all target traffic
     ])

@@ -36,6 +36,7 @@ from state import Asset, RunState, timed, Parameter
 from rate_limits import x8_rate_args
 from http_headers import x8_header_args
 from stages.parallelism import bounded_parallel_map, resolve_max_workers
+from destructive_paths import is_destructive_path
 
 logger = logging.getLogger(__name__)
 
@@ -60,29 +61,10 @@ _X8_SKIP_EXTENSIONS = {
 # Substrings that mark a crawl/history-noise "URL" (HTML fragments, backslashes)
 # that isn't a real endpoint — e.g. gau/wayback returned `/%3C/a%3E` (</a>).
 _X8_NOISE_MARKERS = ("<", ">", "\\", "%3c", "%3e", "%5c")
-# SAFETY: path tokens that signal a state-changing/destructive handler. recon is
-# non-destructive by contract, but x8 (and any active GET probe) can TRIGGER a
-# state change if the app acts on GET (a common anti-pattern) — e.g. a GET to
-# /users/delete/carlos deleting the user. We do NOT actively fuzz these; they're
-# recorded as endpoints elsewhere but left for the (guarded) exploitation layer.
-# Matched as whole path segments (so "deleted_at" or "undeletable" don't trip it).
-_DESTRUCTIVE_PATH_TOKENS = frozenset({
-    "delete", "remove", "destroy", "drop", "purge", "wipe", "erase",
-    "logout", "signout", "deactivate", "disable", "revoke", "reset",
-    "ban", "unban", "cancel", "terminate", "kill", "shutdown", "unsubscribe",
-    "deregister", "unregister", "reboot", "restart",
-})
-
-
-_WORD_RE = re.compile(r"[a-z0-9]+")
-
-
-def _has_destructive_segment(path: str) -> bool:
-    """True if any WORD in the path is a known state-changing action token (see
-    _DESTRUCTIVE_PATH_TOKENS). Words are split on / and -_. so compound segments
-    like 'reset-password' or 'delete-account' trip, while 'deleted_at' (→ deleted)
-    and 'undeletable' do NOT (they're not the exact token 'delete'/'reset')."""
-    return any(w in _DESTRUCTIVE_PATH_TOKENS for w in _WORD_RE.findall(path.lower()))
+# SAFETY: skip param-fuzzing endpoints whose path names a state-changing action
+# (delete/deactivate/reset-password/…) — recon is non-destructive, but x8 sends
+# many requests at an endpoint, and an app acting on GET could be triggered. The
+# token set + matcher are shared (destructive_paths) with the katana crawl guard.
 # Backstop cap on distinct x8 targets per host after filtering/dedup (a pathological
 # host shouldn't reintroduce the serial explosion). Generous; logs when it clamps.
 MAX_X8_URLS_PER_HOST = 100
@@ -113,7 +95,7 @@ def x8_candidate_urls(live_urls: list[str]) -> list[str]:
         parsed = urlparse(url)
         host = parsed.hostname or ""
         path = parsed.path or "/"
-        if _has_destructive_segment(path):
+        if is_destructive_path(path):
             logger.info("x8: SKIP %s - path signals a state-changing action; recon "
                         "does not actively probe destructive endpoints", url)
             continue

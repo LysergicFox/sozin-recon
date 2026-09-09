@@ -173,6 +173,35 @@ def test_x8_wordlist_is_repo_curated_and_covers_common_params():
     print(f"PASS: shipped x8 wordlist params_common.txt ({len(names)} params) covers the common set")
 
 
+def test_destructive_paths_helpers():
+    import re
+    import destructive_paths as dp
+    assert dp.is_destructive_path("/users/delete/carlos")
+    assert dp.is_destructive_path("/auth/reset-password")
+    assert dp.is_destructive_path("/account/deactivate")
+    assert not dp.is_destructive_path("/posts/deleted_at")   # 'deleted' != 'delete'
+    assert not dp.is_destructive_path("/catalog")
+    rx = dp.crawl_out_scope_regex()
+    assert re.search(rx, "https://x/users/delete/carlos")
+    assert re.search(rx, "https://x/session/logout")
+    assert not re.search(rx, "https://x/posts/deleted_at")
+    assert not re.search(rx, "https://x/catalog")
+    print("PASS: destructive_paths is_destructive_path + crawl_out_scope_regex")
+
+
+def test_stage6_katana_has_destructive_cos_guard():
+    import stage6_crawling as m
+    captured = {}
+    def cap(cmd, *a, **k):
+        captured["cmd"] = list(cmd); return ("", "", 0)
+    with mock.patch.object(m, "_run_tool", side_effect=cap):
+        m.run_katana(["a.example.com"], fresh_state(), {})
+    cmd = captured["cmd"]
+    assert "-cos" in cmd, cmd
+    assert "delete" in cmd[cmd.index("-cos") + 1], cmd
+    print("PASS: stage 6 katana passes -cos destructive-path crawl guard")
+
+
 def test_run_x8_parses_dict_found_params():
     """x8's real found_params entries are dicts {name, reason_kind, ...}, not bare
     strings — run_x8 must extract .name (the bug that crashed add_parameters)."""
@@ -222,6 +251,8 @@ if __name__ == "__main__":
     test_x8_candidate_urls_filtering()
     test_x8_candidate_urls_per_host_cap()
     test_x8_wordlist_is_repo_curated_and_covers_common_params()
+    test_destructive_paths_helpers()
+    test_stage6_katana_has_destructive_cos_guard()
     test_run_x8_parses_dict_found_params()
     test_x8_candidate_urls_skips_destructive()
     print("\nALL perf/coverage TESTS PASSED")
