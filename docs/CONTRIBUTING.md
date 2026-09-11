@@ -62,8 +62,10 @@ confirmed before its parser was written. **More tools VERIFIED this way 2026-08-
 (Track C/E build): real cdncheck (`-jsonl -resp`) + wafw00f (`-a -f json -o`,
 example.com→Cloudflare — and wafw00f was found to send attack-signature probes, so it's
 run per-host/scoped), dnsx `-ptr -json` (F5), httpx `-screenshot -system-chrome` (C2),
-and the nuclei detection JSONL + nuclei-template CPE metadata (C1/C5). The nuclei JSONL
-parser — long flagged UNVERIFIED — is **now confirmed** against real positive output.
+and the nuclei detection JSONL + nuclei-template CPE metadata (C1/C5). The nuclei
+**detection** JSONL parser (C1) — long flagged UNVERIFIED — is **now confirmed** against
+real positive output. (The separate **takeover**-finding parser in `stage8_takeover.py`
+stays UNVERIFIED until a real positive takeover finding — see README known-gaps.)
 **The Wayback archive surface (B4 / stage 11) was VERIFIED this way 2026-08-24** — real
 CDX (`output=json` is a list-of-lists whose **first row is a header**; `collapse=digest`
 is **adjacency-only**, so identical non-adjacent captures survive and we dedup by digest
