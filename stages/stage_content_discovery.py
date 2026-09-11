@@ -93,6 +93,45 @@ EXTENSIONS: list[str] = []
 _WAF_403_FLOOD_SIGNAL = "unusual amount of 403 responses"
 _WAF_MAXTIME_SIGNAL = "Maximum running time for this job reached"
 
+# Pre-flight JS-challenge / interstitial markers (case-insensitive substrings).
+# These indicate the ENTIRE response is a challenge/soft-block wall (Cloudflare,
+# DDoS-Guard, Imperva, etc.), so fuzzing the host just hammers a challenge page —
+# and the `-sf` 403-flood breaker never fires because a challenge is served as 200.
+# DELIBERATELY high-precision: NOT bare "captcha"/"recaptcha" (a reCAPTCHA widget
+# on a real login form is a legit page, not a WAF wall) and NOT is_behind_waf alone
+# (most real targets sit behind a WAF/CDN yet serve content normally). Checked
+# against the host's stage-4 httpx_title + httpx_body_preview — data already
+# collected, so this pre-flight sends NO extra traffic.
+_JS_CHALLENGE_MARKERS = (
+    "just a moment",                              # Cloudflare challenge <title>
+    "attention required! | cloudflare",           # Cloudflare block page
+    "checking your browser before accessing",     # Cloudflare / DDoS-Guard interstitial
+    "cf-browser-verification",
+    "challenge-platform",                          # Cloudflare challenge body
+    "please enable javascript and cookies to continue",
+    "verifying you are human",                     # Cloudflare Turnstile interstitial
+    "ddos protection by",                          # DDoS-Guard
+    "ddos-guard",
+    "powered by incapsula",                        # Imperva Incapsula interstitial
+    "_incapsula_resource",
+)
+
+
+def _challenge_signal(meta: dict) -> str | None:
+    """Return the matched JS-challenge marker if the host's stage-4 httpx title or
+    body preview looks like a WAF challenge/interstitial wall, else None. Used to
+    RETREAT from a host before fuzzing it (B1 never engages a WAF). Only the
+    challenge-wall markers above trip this — never is_behind_waf on its own."""
+    haystack = " ".join(
+        str(meta.get(k) or "") for k in ("httpx_title", "httpx_body_preview")
+    ).lower()
+    if not haystack.strip():
+        return None
+    for marker in _JS_CHALLENGE_MARKERS:
+        if marker in haystack:
+            return marker
+    return None
+
 
 def _sanitize(s: str) -> str:
     """Filesystem-safe token of a host for per-target raw filenames (R5). Same
@@ -137,8 +176,13 @@ def _detect_waf(stderr: str, results: list[dict]) -> dict:
 
     B1 always RETREATS from a suspected WAF — it never engages/bypasses one; the
     flag is intel handed to primitive (see PRIMITIVE_WAF_HANDLING_DESIGN.md).
-    ⚠️ Known blind spot: `-sf` keys on 403, so a 200-with-JS-challenge WAF won't
-    trip it (shared open question with the primitive WAF doc)."""
+
+    `-sf` keys on 403 floods (a WAF serving 403s). The complementary
+    200-with-JS-challenge case (a WAF serving a 200 challenge wall, which `-sf`
+    can't see) is now handled UP FRONT by the pre-flight _challenge_signal() check
+    in run_content_discovery(): such a host is retreated-from before fuzzing, so it
+    never reaches this post-hoc path. This detector still covers 403 floods and the
+    maxtime backstop for hosts that pass pre-flight."""
     signal = None
     if _WAF_403_FLOOD_SIGNAL in stderr:
         signal = "403_flood"
@@ -223,6 +267,25 @@ def run_content_discovery(live_hosts: list[str], state: RunState, current_pass: 
     endpoints: list[Endpoint] = []
     waf_flags: dict[str, dict] = {}
 
+    # PRE-FLIGHT RETREAT: a host whose stage-4 fingerprint already looks like a
+    # JS-challenge / interstitial wall gets no ffuf at all — fuzzing it just hammers
+    # a challenge page for the whole -maxtime-job window, and the `-sf` 403 breaker
+    # can't see a 200 challenge. Uses already-collected metadata (no extra traffic).
+    # B1 never engages a WAF; retreat is recorded as intel for primitive/the reviewer.
+    meta_by_host = {a.value: a.metadata for a in state.load_assets() if a.type == "subdomain"}
+    to_fuzz: list[str] = []
+    for host in live_hosts:
+        marker = _challenge_signal(meta_by_host.get(host, {}))
+        if marker is not None:
+            logger.warning("ffuf: RETREAT from %s - stage-4 fingerprint matches a JS-challenge/"
+                           "interstitial wall (%r); B1 does not fuzz a challenged host", host, marker)
+            waf_flags[host] = {"waf_suspected": True, "waf_signal": "js_challenge",
+                               "waf_block_ratio": None}
+        else:
+            to_fuzz.append(host)
+    if not to_fuzz:
+        logger.info("stage 6.5: every live host retreated-from as WAF-challenged; no ffuf run")
+
     # Parallelize ffuf across DISTINCT hosts (each keeps its own per-host -rate; the
     # helper is R3-correct by construction and R7-isolates a per-host failure). The
     # network-bound ffuf runs concurrently; hit processing below stays serial.
@@ -232,9 +295,9 @@ def run_content_discovery(live_hosts: list[str], state: RunState, current_pass: 
     with timed(state, "stage6_5.ffuf_total"):
         def _ffuf_one(host):
             return run_ffuf(host, state, scope, base=(host_base or {}).get(host))
-        per_host = bounded_parallel_map(_ffuf_one, live_hosts, workers=workers,
+        per_host = bounded_parallel_map(_ffuf_one, to_fuzz, workers=workers,
                                         label="stage 6.5 ffuf")
-        for host in live_hosts:
+        for host in to_fuzz:                           # retreated hosts already have their waf_flag
             if host not in per_host:
                 continue                               # failed + logged in the helper (R7)
             hits, waf = per_host[host]

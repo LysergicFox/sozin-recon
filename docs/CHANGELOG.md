@@ -5,6 +5,25 @@ Compact, newest-first. Status tags: **DONE** / **DESIGN** (locked, not built) /
 
 ---
 
+## 2026-09-10 — stage 6.5 pre-flight WAF-challenge retreat: DONE
+
+Closes the documented blind spot that ffuf's `-sf` breaker only catches 403
+floods, so a 200-with-JS-challenge WAF would be hammered for the whole
+`-maxtime-job` window (and its challenge pages ingested).
+
+- **`stages/stage_content_discovery.py`** — new `_challenge_signal(meta)` +
+  `_JS_CHALLENGE_MARKERS`: before fuzzing, check the host's already-collected
+  stage-4 `httpx_title` / `httpx_body_preview` for interstitial-wall markers
+  (Cloudflare "Just a moment…", "Checking your browser", DDoS-Guard, Incapsula,
+  etc.). A matching host is RETREATED-from — no ffuf, zero extra traffic —
+  recorded as `waf_flags[host] = {waf_suspected, waf_signal: "js_challenge"}`.
+- Deliberately high-precision: `is_behind_waf` alone does NOT trigger retreat
+  (most real targets sit behind a WAF/CDN yet serve content fine), and a
+  reCAPTCHA/hCaptcha widget on a legit page is not treated as a challenge wall.
+- `_detect_waf` post-hoc path still covers 403 floods + the maxtime backstop for
+  hosts that pass pre-flight; its stale "known blind spot" note updated.
+- Tests: `testing/test_waf_preflight.py`. Suite 177 passed. ⚠️ mocked only.
+
 ## 2026-09-10 — true per-host rate limiting (R3 close-out): DONE
 
 Closes the R3 whole-invocation-`-rl` gap for the two tools it actually bit, and
