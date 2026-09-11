@@ -22,3 +22,8 @@ run_state.json
 # scope.json carries the in-scope allowlist — never commit a real one.
 # A sanitized scope.example.json is tracked instead.
 scope.json
+
+# Mocked test suites are dev-local, not shipped: they stay on disk so the suite
+# still runs (python3 -m pytest testing/), but are kept out of the repo. The
+# single-stage re-runners (testing/run_*.py) ARE tracked and shipped.
+testing/test_*.py

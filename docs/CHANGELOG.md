@@ -187,7 +187,7 @@ suite `testing/test_track_d.py` green; real zonetransfer.me run populated `servi
   (target_derived 0, reflected); jsluice → `endpoint` + `parameter` (B3:
   query/body/method, previously discarded, target_derived 1) + `secret`.
 - `secret` stores a capped `fingerprint` + `raw_log_ref` only — **raw value never
-  in assets.db**; `validated` left for primitive downstream.
+  in assets.db**; `validated` left for a downstream consumer, never set by recon.
 - Dropped `x8_reflected_params` / `jsluice_secrets` metadata keys (records supersede).
 - Stage-7 jsluice raw archives now per-source (R5-style) so `raw_log_ref` is stable.
 - `main.persist_records` links `asset_id` + drops out-of-scope records.
@@ -233,45 +233,9 @@ R3 generalized katana's `-rl` gap to nuclei + bundler probe.
 
 ---
 
-## 2026-08-22 — Primitive agent design adversarially reviewed (16 resolutions)
-
-**DESIGN (review-hardened), not built.** Folded into `PRIMITIVE_AGENT_DESIGN.md`
-(+guard, run lifecycle, tool surface); record in `PRIMITIVE_DESIGN_REVIEW_RESOLUTIONS.md`.
-- Themes: guard is the sole path to live-action tools (fail-closed); deny-by-default
-  capabilities; write-ahead everything; flat-conservative defaults + explicit human
-  extend; trust boundary travels downstream.
-- Reversals: #8 circuit breaker flattened (100 req/30 min, candidate_count now
-  informational only); §2/§9/§12 reframed (bounded autonomy; injection = best-effort
-  likelihood-reducer; Caido control-plane not granted).
-- 16 fixes incl. 3-layer guard, reserve-before-act, hash-chained log, redact-on-write
-  + capped credential fingerprints, action-time scope re-check + CNAME trap.
-- Deferred/tracked: human-approval queue; tier-3 + shell network tooling; at-rest
-  encryption; Phase-2 budget scaling; cross-agent untrusted-data lock; Caido
-  tool-behavior verification.
-
-## 2026-08-22 — Primitive §10/§11, wall-clock, breaker defaults, Caido, schematic reconcile
-
-**DESIGN.** Sink taxonomy 14 entries; live-confirm budget (later 20% soft cap on flat
-ceiling); `points_of_interest` schema. Two-phase wall-clock (Phase 2 human-unlocked).
-Breaker numeric defaults (later flattened; candidate_count no longer a safety input;
-stuck-loop deterministic). Caido server confirmed (66 tools), §12 four-tier model
-(later +data/control-plane axis, control-plane + tier-3 denied, all UNVERIFIED).
-Persistence = raw log + findings + source_sink_map + POI (4 artifacts);
-escalation↔primitive bidirectional loop.
-
-## 2026-08-22 — Primitive scope/safety/TOS-guardrail design locked
-
-**DESIGN.** Live-target authorization flag (fail-closed); bounded autonomy; no
-category allowlist; `roe_gate.py`; forbidden-actions blocklist (→ 3 guard layers);
-circuit breaker; chaining is escalation's job; evidence persistence; prompt-injection
-= data-not-instructions.
-
----
-
 ## 2026-08-22 — Proceed past recon on one-pass; loop-until-stable deferred
 
-**DECISION.** One-pass accepted as workable; loop design locked, not wired. Unlocks
-primitive design.
+**DECISION.** One-pass accepted as workable; loop design locked, not wired.
 
 ## 2026-08-22 — Stage 1: Cert Spotter added (crt.sh substituted)
 

@@ -1,18 +1,17 @@
-# Contributing to hackbot (sozin)
+# Contributing to sozin-recon
 
 This document captures how work gets done on this project — the process
 and principles behind the code, not the code itself. Read this before
-building a new stage, extending an existing one, or starting design work
-on the primitive/escalation/validator/report agents. `../README.md` covers
-what the pipeline does and how to run it; this covers how to safely
+building a new stage or extending an existing one. `../README.md` covers
+what the recon engine does and how to run it; this covers how to safely
 change it.
 
 > **Repo layout note:** **shipped project docs live in `docs/`; design/planning docs
-> live in `design_docs/`** (both tracked in the repo); tests and single-stage re-run
-> scripts live in `testing/`; `README.md` stays at the repo root. The design/planning
-> docs referenced below (`RECON_AGENT_DESIGN.md`, `RECON_ENHANCEMENTS.md`,
+> live in `design_docs/`** (both tracked in the repo); the single-stage re-run
+> scripts live in `testing/` (`run_*.py`); `README.md` stays at the repo root. The
+> design/planning docs referenced below (`RECON_AGENT_DESIGN.md`, `RECON_ENHANCEMENTS.md`,
 > `RECON_RESOLUTIONS_IMPL_PLAN.md`, `RECON_TRACK_D_DESIGN.md`, the `RECON_B1`/`RECON_B2`
-> build specs, `PRIMITIVE_*`) all live in `design_docs/`.
+> build specs) all live in `design_docs/`.
 
 ---
 
@@ -28,8 +27,7 @@ In practice:
 - Deferred items are **named and tracked**, not silently dropped (README's
   known-gaps list or the CHANGELOG - not someone's memory).
 - If you're about to write code implementing a design that hasn't been
-  locked yet, stop and lock the design first. Recent examples: the primitive
-  agent (`PRIMITIVE_AGENT_DESIGN.md` + its review resolutions), the recon
+  locked yet, stop and lock the design first. Recent examples: the recon
   agent's retroactive capture + 16-finding review, and **Track D's
   source-record model** (`RECON_TRACK_D_DESIGN.md`, locked then built
   2026-08-23).
@@ -43,7 +41,7 @@ Every stage, every change, follows the same sequence:
 1. **Build** the code.
 2. **Mocked-subprocess tests** (exercise logic without real tools/targets).
 3. **Real run** against a real, consented target (`zonetransfer.me` is the
-   standing recon target; primitive needs its own consented exploit-target).
+   standing recon target).
 4. **Fix any real bugs found.** There will be real bugs.
 5. **Second real run to confirm clean.**
 
@@ -55,9 +53,7 @@ probe treated 301s as "found JS"; whatweb's multi-host batching produced
 cross-host attribution errors. None were catchable from docs alone.
 
 **Never assume a tool's behavior from its documentation. Run it.** This
-applies with full force to the Caido MCP surface (`PRIMITIVE_AGENT_DESIGN.md`
-§12, tagged UNVERIFIED until run for real) and to every tool in the recon
-enhancement roadmap. **ffuf (B1) and the OpenAPI/GraphQL formats (B2) were VERIFIED
+applies to every tool in the recon enhancement roadmap. **ffuf (B1) and the OpenAPI/GraphQL formats (B2) were VERIFIED
 this way 2026-08-23** — real ffuf 2.1.0-dev (`content-type` key is hyphenated;
 `-sf`/`-maxtime-job` exit 0 and only signal early-stop on stderr), real Swagger
 Petstore 2.0/3.0 shapes, and a real graphql-core introspection response, each
@@ -101,9 +97,8 @@ Hard rules, not preferences:
   run too** — the conservative default (`resolution:"not_applicable"`) must be
   chosen, never fallen into by omission.
 
-The same discipline governs primitive's RoE gate and guard (fail closed on
-their own failure). If you add a new judgment point, define the fail-closed
-behavior *before* the success path.
+If you add a new judgment point, define the fail-closed behavior *before* the
+success path.
 
 ---
 
@@ -133,8 +128,8 @@ tables, not metadata blobs. A stage that produces them returns them as records
 (the 3rd element of its return tuple, `{"parameters":[...], ...}`) for
 `main.persist_records()` to link + persist. **Never store a raw secret value in
 `assets.db`** — store a capped fingerprint + a `raw_log_ref` pointer (the full
-value stays only in the chmod-700 raw archive). `validated` on a secret is
-primitive's to set, never recon's.
+value stays only in the chmod-700 raw archive). `validated` on a secret is left
+for a downstream consumer to set — recon never confirms a secret.
 
 ---
 
@@ -150,8 +145,7 @@ fresh finds — this matters once loop-until-stable runs a stage across passes.
 
 `testing/run_stage*_only.py` re-run one stage against an existing `assets.db`
 by importing the shared `run_stageN_and_report()` from `main.py` — they never
-reimplement it. Two implementations drift. Same rule for primitive's
-action-time scope re-check (reuse `scope_gate.py`, don't reimplement).
+reimplement it. Two implementations drift.
 
 ---
 
@@ -190,7 +184,7 @@ When a change lands, log it there; when you flush, update the affected doc:
 | Change | Update |
 |---|---|
 | `state.py` schema change | `docs/STATE_SCHEMA.md` + `../README.md`'s state-file table |
-| A stage moves placeholder ↔ built | `docs/pipeline_schematic.mermaid` + README |
+| A stage moves placeholder ↔ built | `../README.md`'s pipeline table |
 | A real-run bug or fix | `docs/CHANGELOG.md` |
 | A new/closed known gap | `../README.md` known-gaps |
 | A locked design decision / review | the relevant design doc + `docs/CHANGELOG.md` |
@@ -199,35 +193,23 @@ When a change lands, log it there; when you flush, update the affected doc:
 
 ## Committed future items — do not let these drop
 
-- **`chains_with` / chain-graph for the technique KB** — primitive's
-  `source_sink_map` is the mechanism this chains from; the recon roadmap's
-  first-class `parameter`/`endpoint` records (Track D, **now built**) are the
-  queryable *sources* that map consumes — the recon→primitive seam made literal.
 - **Recon enhancement roadmap** (`RECON_ENHANCEMENTS.md`) — Track D shipped
   2026-08-23; Track B (content/API discovery) is next and fills the `endpoint`
   table. Every item stays on the recon side (discover/enrich/prioritize/flag
   candidates), never test/exploit/confirm. Active-traffic items inherit R1–R16.
-- **Cross-agent untrusted-data lock** — target-derived text is untrusted data
-  everywhere (escalation + validator design sessions). Recon's hook: the R9
-  registry + Track-D records' `target_derived` flag; recon's first LLM (the
-  roadmapped review pass) must treat target content as delimited data.
-- **Primitive scope/safety/TOS-guardrail design** — resolved; implementation
-  still needs the staged verification discipline before primitive touches a
-  target.
-- **Caido MCP tool-behavior verification** — §12's model was written from a repo
-  read; verify against a real running server + consented exploit-target.
+- **Untrusted-data handling** — target-derived text is untrusted data
+  everywhere. Recon's hook: the R9 registry + Track-D records' `target_derived`
+  flag; if a review-pass LLM is ever added, it must treat target content as
+  delimited data, never instructions.
 
 ---
 
 ## See also
 
-- `../README.md` — what the pipeline does, how to run it
+- `../README.md` — what the recon engine does, how to run it
 - `STATE_SCHEMA.md` — exact on-disk file formats
-- `pipeline_schematic.mermaid` — visual architecture
 - `CHANGELOG.md` — dated history
 - Design/planning docs in `../design_docs/`: `RECON_DESIGN_REVIEW_RESOLUTIONS.md`
-  (R1–R16), `PRIMITIVE_AGENT_DESIGN.md` (locked, not built), `RECON_AGENT_DESIGN.md`,
-  `RECON_ENHANCEMENTS.md`, `RECON_RESOLUTIONS_IMPL_PLAN.md`, `RECON_TRACK_D_DESIGN.md`,
-  `RECON_B1_CONTENT_DISCOVERY_DESIGN.md`, `RECON_B2_API_SCHEMA_DISCOVERY_DESIGN.md`,
-  `PRIMITIVE_DESIGN_REVIEW_RESOLUTIONS.md`, `PRIMITIVE_DESIGN_REVIEW_ROUND2.md`,
-  `PRIMITIVE_WAF_HANDLING_DESIGN.md`
+  (R1–R16), `RECON_AGENT_DESIGN.md`, `RECON_ENHANCEMENTS.md`,
+  `RECON_RESOLUTIONS_IMPL_PLAN.md`, `RECON_TRACK_D_DESIGN.md`,
+  `RECON_B1_CONTENT_DISCOVERY_DESIGN.md`, `RECON_B2_API_SCHEMA_DISCOVERY_DESIGN.md`

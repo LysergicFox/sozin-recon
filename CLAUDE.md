@@ -1,6 +1,6 @@
 # CLAUDE.md — sozin-recon
 
-Standalone reconnaissance engine, extracted from the larger Sozin pipeline.
+Standalone reconnaissance engine.
 Scripted and deterministic: same input → same behavior. **No LLM calls, no
 exploitation.** It discovers, enriches, prioritizes, and flags candidates — it
 never tests, exploits, uses a credential, or confirms a vulnerability.
@@ -22,7 +22,7 @@ and `docs/STATE_SCHEMA.md` for the on-disk format.
 - `testing/` — `test_*.py` mocked suites + `run_stage*_only.py` re-runners
   (which **import** the shared `run_stageN_and_report()` from `main.py`, never
   reimplement it).
-- `docs/` — shipped docs (CONTRIBUTING, STATE_SCHEMA, CHANGELOG, schematic).
+- `docs/` — shipped docs (CONTRIBUTING, STATE_SCHEMA, CHANGELOG).
 - `design_docs/` — design specs + the R1–R16 adversarial review record.
 - `Dockerfile` / `docker-compose.yml` — the self-contained image (all external
   CLIs + SecLists at `~/tools/SecLists` + nuclei templates baked in).

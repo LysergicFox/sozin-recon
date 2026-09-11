@@ -7,11 +7,11 @@ URLs, parameters, endpoints, secrets, and services — with **every stage's stat
 externalized to disk** so a human can inspect, intervene, or resume between any two
 steps.
 
-This is the recon engine extracted from the larger Sozin pipeline as a standalone,
-Dockerized product. It runs **one pass** of stages 1–11 plus enrichment passes,
-scripted end to end — same input, same behavior. It makes **no LLM calls** and does
-**no exploitation**: it discovers, enriches, prioritizes, and flags candidates, and
-never tests, exploits, uses a credential, or confirms a vulnerability.
+It is a self-contained, Dockerized product. It runs **one pass** of stages 1–11
+plus enrichment passes, scripted end to end — same input, same behavior. It makes
+**no LLM calls** and does **no exploitation**: it discovers, enriches, prioritizes,
+and flags candidates, and never tests, exploits, uses a credential, or confirms a
+vulnerability.
 
 > **Authorized use only.** Every active-traffic stage runs behind a deterministic
 > scope gate and per-host rate limits. You must supply a `scope.json` with an

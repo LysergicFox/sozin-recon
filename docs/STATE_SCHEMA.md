@@ -35,12 +35,6 @@ run_directory/
 > `services` — facts *about* a location, FK-linked to their parent asset. See the
 > "Track D source-record tables" section below. Settles R13 (locations vs records).
 
-> **Primitive agent adds to this schema (design-locked, NOT built).** A
-> `primitive_authorized` / `rules_of_engagement` block in `scope.json`,
-> `pause_reason`/`pause_detail`/checkpoint state in `run_state.json`, and four
-> SQLite artifacts (raw action log, primitive findings table, `source_sink_map`,
-> `points_of_interest`) — see the "Primitive agent" section at the end.
-
 ---
 
 ## `scope.json`
@@ -147,7 +141,7 @@ dedup on the UNIQUE key.
 - **`secrets`** (D3) — `kind`, `provider` (nullable, E4 later), `fingerprint`
   (capped `first4…last4|len=N|sha256=<16hex>` — **the raw value NEVER enters
   assets.db**), `raw_log_ref` (pointer to the per-source raw archive), `severity`
-  (nullable), `validated` (nullable — **set downstream by primitive, never recon**).
+  (nullable), `validated` (nullable — **set downstream, never by recon**).
   `UNIQUE(asset_id, fingerprint)`. `target_derived` always 1. Producers: jsluice
   (stage 7) and **wayback_jsluice (stage 11, B4 — secrets from archived `.js`, `source=wayback`
   metadata; `metadata["source_url"]` = the archived `.js` URL, the parent-link)**. The raw
@@ -193,7 +187,7 @@ onto assets (all agent-authored/**trusted** unless noted):
   on host — `auth_model` (per-host summary).
 - **A2 (url + host):** `interest_score` (int) + `interest_signals` (explainable breakdown).
 - **F1 (url):** `url_cluster` (template), `cluster_size`, `cluster_representative`.
-- **E4 (secrets):** fills `kind`/`provider` offline (never `validated` — primitive's).
+- **E4 (secrets):** fills `kind`/`provider` offline (never `validated` — that's set downstream, not by recon).
 - **B2 (stage 10, url asset + endpoint):** `openapi_spec`/`openapi_method`; GraphQL endpoint
   metadata `graphql`, `graphql_queries`/`graphql_mutations` (operation→args catalog).
 
@@ -225,9 +219,6 @@ until the LLM tier exists.
 **(R7, implemented)** `main()` wraps the pipeline so an unhandled exception sets
 `status="error"` + `failed_at_stage` before re-raising. Paired with per-tool fault
 isolation across stages 3/4/6/8/9. `"stable"` reserved for the unbuilt loop.
-
-> **Primitive will add `pause_reason` + `pause_detail` + a whole-loop checkpoint
-> here (design-locked, not built).** See `PRIMITIVE_AGENT_DESIGN.md` §6.
 
 ---
 
@@ -266,31 +257,11 @@ encryption stays deferred (preserves `sqlite3`/`cat` inspectability).
 Track D (D1–D4, above) is **BUILT**. Still planned (`RECON_ENHANCEMENTS.md`):
 
 - **`recon_findings` / POI table (C1)** — general detection leads (detection-only
-  nuclei), mirroring primitive's `points_of_interest`.
+  nuclei).
 - **`recon_summary` artifact (A1)** — curated attack-surface brief from the
-  (unbuilt) final review pass; versioned recon→primitive contract.
+  (unbuilt) final review pass.
 - `endpoint` heavy population from content/API discovery (Track B); `secret`
   `provider` from the offline classifier (E4); `service`-seeded probing (R12).
-
----
-
-## Primitive agent (design-locked, NOT built)
-
-On-disk additions specified in `PRIMITIVE_AGENT_DESIGN.md` /
-`PRIMITIVE_DESIGN_REVIEW_RESOLUTIONS.md`. **None implemented yet.**
-
-- **`scope.json`:** `primitive_authorized` (fail-closed, +authorized_at/by, expiry);
-  `rules_of_engagement` block (parallel to `rate_limit`, parsed by `roe_gate.py`).
-- **Raw action log (§8):** every live action (incl. refused), append-only +
-  hash-chained, write-ahead; secret values capped; `target_derived`/`agent_authored`
-  provenance.
-- **Primitive findings table (§8):** analogous to `takeover_findings`; found-cred
-  findings store a capped fingerprint + `raw_log_ref` + validation, never the value.
-- **`source_sink_map` (§10):** `source`/`sink`/`candidate_bug_class`/`impact`/
-  `confidence` (`inferred`|`live_confirmed`). Recon's `parameter`/`endpoint` records
-  are the queryable *sources* this consumes — the Track-D seam made literal.
-- **`points_of_interest` (§11):** id/run_id/note/raw_log_ref/rationale/status/
-  promoted_to/promoted_by; `target_derived`/`agent_authored` on free-text.
 
 ---
 
@@ -299,5 +270,3 @@ On-disk additions specified in `PRIMITIVE_AGENT_DESIGN.md` /
 If you change any shape above in `state.py`, update in the same sitting:
 1. This file.
 2. `README.md`'s state-file table.
-3. `pipeline_schematic.mermaid`'s `STATE` subgraph, if it affects how a stage
-   reads/writes state.
