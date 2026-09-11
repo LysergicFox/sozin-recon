@@ -5,6 +5,36 @@ Compact, newest-first. Status tags: **DONE** / **DESIGN** (locked, not built) /
 
 ---
 
+## 2026-09-10 — true per-host rate limiting (R3 close-out): DONE
+
+Closes the R3 whole-invocation-`-rl` gap for the two tools it actually bit, and
+fixes a latent global-scope over-rate in the already-parallelized per-host stages.
+
+- **`rate_limits.py`** — `katana_rate_args` / `nuclei_rate_args` rewritten to the
+  ffuf model: take only `scope`, emit `-rl <per_host>` (a TRUE per-host cap), no
+  `host_count` scaling. The old `base_rps x host_count` whole-invocation ceiling
+  (which one link-heavy host or a 60+-template scan could absorb) is gone.
+- **`stages/parallelism.py`** — new `resolve_host_workers(scope)`: `per_host`
+  scope → `resolve_max_workers()`; **`global` scope → 1 (sequential)**, so W
+  concurrent hosts × the per-host rate can't exceed a stated global ceiling.
+- **`stages/stage6_crawling.py`** (katana) + **`stages/stage8_takeover.py`**
+  (nuclei takeover + C1 detection) — now run ONE HOST PER INVOCATION, parallelized
+  across distinct hosts via `resolve_host_workers()`, per-host raw archives (R5),
+  per-host failure isolated (R7). nuclei stdouts concatenate in stable host order
+  so `parse_nuclei_jsonl` is unchanged.
+- **`stages/stage_content_discovery.py`** (ffuf), **`stages/stage9_whatweb.py`**
+  (whatweb), **`stages/stage5_hidden_params.py`** (x8) — switched from
+  `resolve_max_workers` to `resolve_host_workers`, closing the latent
+  global-scope over-rate (up to `max_workers`× the ceiling) in these
+  already-parallelized per-host stages.
+- Residual (documented, minor): the stage-7 bundler httpx probe keeps a
+  whole-invocation `-rl` over a small FIXED path list; httpx liveness / naabu /
+  screenshots are single batched invocations (~1 req/host or own model) and are
+  global-safe as-is.
+- Tests: `testing/test_per_host_rate.py` (resolver + per-host invocation + R7
+  isolation). Suite 175 passed. ⚠️ mocked only — a real confirming run on a
+  multi-host consented target is the natural next step.
+
 ## 2026-09-07 — `--target-dir`: runs populate a target folder's `runs/`: DONE
 
 **DONE (verified: run-dir resolution exercised directly — dir created + `chmod
@@ -19,9 +49,12 @@ neither/both).** Adds the run-layout `sozin-dashboard` consumes.
   unchanged; the timestamp-prefixed name sorts chronologically so a consumer can
   pick the latest run from the dir name alone.
 - **README** — documents `--run-dir` vs `--target-dir` (local + Docker).
-- ⚠️ A full end-to-end pipeline run via `--target-dir` (needs external CLIs + a
-  verified scope) is the natural next confirming run; the run-dir plumbing itself
-  is confirmed.
+- ✅ (2026-09-08) A full end-to-end pipeline run has since been completed in the
+  `--target-dir` layout — the consented ginandjuice run at
+  `runs/run_20260908T012659Z_00912a/` shows every `--target-dir` signature
+  (`chmod 700` run dir, copied `scope.json` snapshot, time-sortable name) with
+  real stage-3→11 timings, confirming the end-to-end path, not just the run-dir
+  plumbing.
 
 ## 2026-08-24 — B4 / stage 11 archived-JS mining: DESIGN → DONE (Track B complete)
 

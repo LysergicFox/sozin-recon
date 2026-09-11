@@ -299,7 +299,7 @@ def dnsx_rate_args(scope: dict) -> ToolInvocationExtras:
     )
 
 
-def katana_rate_args(scope: dict, host_count: int) -> ToolInvocationExtras:
+def katana_rate_args(scope: dict) -> ToolInvocationExtras:
     """
     katana: confirmed real flag `-rl <n>` (requests/sec, whole invocation).
     Stage 6's module docstring notes -d/-mdp (depth/page caps) are
@@ -308,64 +308,45 @@ def katana_rate_args(scope: dict, host_count: int) -> ToolInvocationExtras:
     it crawls, not how FAR) and is set here regardless of that separate
     depth decision.
 
-    ⚠️ KNOWN GAP (R3 - generalized beyond katana): the whole-invocation -rl
-    ceiling is NOT a true per-host guarantee for any tool that issues many
-    requests per target. katana is the archetype - a CRAWLER with no
-    depth/breadth cap (see module docstring / stage6_crawling.py), so a
-    single seed host with many internal links can absorb the ENTIRE
-    multi-host -rl budget while other seed hosts get nearly none: e.g. 17
-    hosts x 5 req/s = -rl 85 for the whole invocation, but if the crawl
-    concentrates on one host, that one host could see close to the full
-    85 req/s (~17x the intended per-host courtesy rate). The R3 resolution
-    records that this same wrong-SHAPE problem also applies to nuclei
-    (nuclei_rate_args) and the stage-7 bundler probe - it is NOT unique to
-    katana, and it is NOT the wrong-ANCHOR bug the dnsx/puredns fixes
-    addressed (no scaling constant fixes an uneven crawl distributing
-    unevenly). Deliberately NOT fixed this pass - flagged and tracked.
-    Candidates: per-host invocations (mirrors whatweb's fix, genuinely caps
-    each host, but loses cross-host crawl-queue sharing and multiplies
-    process count); documenting as an accepted limitation; non-linear
-    host_count scaling. The fix rides with the request-count-instrumentation
-    work; don't quietly resolve it without picking one deliberately.
-
-    NOTE (R4): for a GLOBAL rate scope the unscaled pass-through is also the
-    *safe* reading here - it never grants one host more than the stated
-    global ceiling.
+    (R3 CLOSED) Stage 6 now runs katana ONE HOST PER INVOCATION, parallelized
+    across distinct hosts by resolve_host_workers() (which forces sequential
+    execution under a global rate scope). Because only one host is crawled per
+    process, `-rl <per_host>` is a TRUE per-host cap - the old whole-invocation
+    ceiling (where a single link-heavy host could absorb the entire multi-host
+    budget) is gone. This mirrors ffuf's per-host model; like ffuf, it takes
+    only `scope` and uses resolve_effective_rps() directly (no host_count
+    scaling, no _effective_total). A global scope needs no special handling
+    here for the same reason ffuf/whatweb don't: cross-host concurrency is what
+    resolve_host_workers() collapses to 1 for global.
     """
-    base_rps, total, rate_scope = _effective_total(scope, host_count)
-    extra = ("" if rate_scope == "global"
-             else ", NOTE: whole-invocation ceiling, not a true per-host guarantee - see katana_rate_args() docstring (R3)")
-    if rate_scope == "global":
-        note = f"katana -rl {total} (GLOBAL cap, not scaled by host count - R4)"
-    else:
-        note = f"katana -rl {total} ({base_rps}/s/host x {host_count} host(s){extra})"
-    return ToolInvocationExtras(extra_args=["-rl", str(total)], note=note)
+    per_host = resolve_effective_rps(scope)
+    return ToolInvocationExtras(
+        extra_args=["-rl", str(per_host)],
+        note=(f"katana -rl {per_host} (per-host cap; one host per invocation, so a "
+              f"TRUE per-host guarantee - closes the R3 whole-invocation gap for katana)"),
+    )
 
 
-def nuclei_rate_args(scope: dict, host_count: int) -> ToolInvocationExtras:
+def nuclei_rate_args(scope: dict) -> ToolInvocationExtras:
     """
     nuclei: confirmed real flag `-rl <n>` (requests/sec, whole invocation) -
     same flag family as httpx/naabu (see stage8_takeover.py).
 
-    ⚠️ (R3) nuclei is one of the multi-request-per-host tools the
-    whole-invocation -rl gap actually bites: stage 8 runs the full
-    `-tags takeover` set (60+ templates), so a SINGLE host can absorb the
-    entire aggregate -rl budget - the per_host x host_count scaling below
-    distributes the ceiling as if each host got ~1 request, which is false
-    here. This is the same wrong-shape limitation as katana (see
-    katana_rate_args), generalized to nuclei by the R3 resolution and left
-    flagged-not-fixed; the per-host-invocation fix rides with the
-    request-count-instrumentation work. For a GLOBAL scope (R4) the unscaled
-    pass-through is the safe reading.
+    (R3 CLOSED) Stage 8 now runs nuclei ONE HOST PER INVOCATION, parallelized
+    across distinct hosts by resolve_host_workers() (sequential under a global
+    rate scope). The full `-tags takeover` set (60+ templates) all fires at a
+    single host per process, so `-rl <per_host>` is a TRUE per-host cap - the
+    old whole-invocation ceiling (one host could absorb the entire aggregate)
+    is gone. Mirrors ffuf/katana: takes only `scope`, uses resolve_effective_rps()
+    directly. Global scope handled by resolve_host_workers() collapsing cross-host
+    concurrency to 1, so no scaling is needed here.
     """
-    base_rps, total, rate_scope = _effective_total(scope, host_count)
-    extra = ("" if rate_scope == "global"
-             else ", NOTE: 60+ templates/host means one host can absorb this whole-invocation ceiling - not a true per-host cap (R3)")
-    if rate_scope == "global":
-        note = f"nuclei -rl {total} (GLOBAL cap, not scaled by host count - R4)"
-    else:
-        note = f"nuclei -rl {total} ({base_rps}/s/host x {host_count} host(s){extra})"
-    return ToolInvocationExtras(extra_args=["-rl", str(total)], note=note)
+    per_host = resolve_effective_rps(scope)
+    return ToolInvocationExtras(
+        extra_args=["-rl", str(per_host)],
+        note=(f"nuclei -rl {per_host} (per-host cap; one host per invocation, so a "
+              f"TRUE per-host guarantee - closes the R3 whole-invocation gap for nuclei)"),
+    )
 
 
 def puredns_rate_args(scope: dict) -> ToolInvocationExtras:

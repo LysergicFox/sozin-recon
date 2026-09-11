@@ -39,6 +39,30 @@ def resolve_max_workers(scope: dict) -> int:
     return n
 
 
+def resolve_host_workers(scope: dict) -> int:
+    """Worker count for parallelizing a per-host-rate TARGET-FACING tool across
+    distinct hosts, made safe for a GLOBAL rate scope.
+
+    - per_host scope (default): distinct hosts run concurrently, each keeping its
+      own per-host budget — the intended "each host gets its own rate" model.
+      Returns resolve_max_workers(scope).
+    - global scope: a single ceiling governs ALL hosts combined. Running W hosts
+      concurrently, each at the per-host rate, would reach W x the ceiling — a
+      violation (the per-host tools' own rate args assume only one host is in
+      flight at a time). Force workers=1 so at most one host is hit at any instant
+      and the instantaneous aggregate stays at or below the stated global rate.
+
+    Use this (not resolve_max_workers) for every target-facing per-host stage
+    (x8, ffuf, whatweb, katana, nuclei). Third-party/passive fan-out (stage 1's
+    archive/cert APIs) has no target rate to protect and keeps resolve_max_workers."""
+    # Imported here (not at module top) purely for tidiness; rate_limits does not
+    # import parallelism, so a top-level import would also be cycle-free.
+    from rate_limits import resolve_rate_scope
+    if resolve_rate_scope(scope) == "global":
+        return 1
+    return resolve_max_workers(scope)
+
+
 def bounded_parallel_map(fn, items, workers: int = DEFAULT_MAX_WORKERS, label: str = "task") -> dict:
     """Run fn(item) across items with a bounded thread pool. Returns {item: result}
     for successes; a per-item failure is logged and skipped (R7). Order-independent."""

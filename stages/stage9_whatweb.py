@@ -107,7 +107,7 @@ from urllib.parse import urlparse
 from state import RunState
 from rate_limits import whatweb_rate_args
 from http_headers import header_args
-from stages.parallelism import bounded_parallel_map, resolve_max_workers
+from stages.parallelism import bounded_parallel_map, resolve_host_workers
 
 logger = logging.getLogger(__name__)
 
@@ -239,7 +239,7 @@ def run_whatweb(hosts: list[str], state: RunState, scope: dict) -> dict[str, lis
     def _scan(host):
         return _scan_one_host(host, state, scope)
     results_by_host = bounded_parallel_map(_scan, hosts,
-                                           workers=resolve_max_workers(scope),
+                                           workers=resolve_host_workers(scope),  # sequential under global scope
                                            label="stage 9 whatweb")
     # The helper R7-skips a failed host (no key); restore the "every host present,
     # empty list on failure" contract the rest of the stage relies on.

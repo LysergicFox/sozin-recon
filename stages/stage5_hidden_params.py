@@ -35,7 +35,7 @@ from collections import defaultdict
 from state import Asset, RunState, timed, Parameter
 from rate_limits import x8_rate_args
 from http_headers import x8_header_args
-from stages.parallelism import bounded_parallel_map, resolve_max_workers
+from stages.parallelism import bounded_parallel_map, resolve_host_workers
 from destructive_paths import is_destructive_path
 from url_hygiene import is_malformed_url_asset
 
@@ -375,7 +375,7 @@ def run_stage5(root_domains: list[str], live_urls: list[str],
     parameters: list[Parameter] = []
     with timed(state, "stage5.x8_total"):
         per_host = bounded_parallel_map(_x8_for_host, list(urls_by_host.keys()),
-                                        workers=resolve_max_workers(scope),
+                                        workers=resolve_host_workers(scope),  # sequential under global scope
                                         label="stage 5 x8 (per host)")
     for host in urls_by_host:
         parameters.extend(per_host.get(host, []))

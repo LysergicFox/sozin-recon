@@ -48,7 +48,7 @@ from urllib.parse import urlparse
 from state import Asset, RunState, Endpoint, timed
 from rate_limits import ffuf_rate_args
 from http_headers import header_args
-from stages.parallelism import bounded_parallel_map, resolve_max_workers
+from stages.parallelism import bounded_parallel_map, resolve_host_workers
 
 logger = logging.getLogger(__name__)
 
@@ -226,7 +226,9 @@ def run_content_discovery(live_hosts: list[str], state: RunState, current_pass: 
     # Parallelize ffuf across DISTINCT hosts (each keeps its own per-host -rate; the
     # helper is R3-correct by construction and R7-isolates a per-host failure). The
     # network-bound ffuf runs concurrently; hit processing below stays serial.
-    workers = resolve_max_workers(scope)
+    # resolve_host_workers() forces sequential (workers=1) under a global rate scope
+    # so W concurrent hosts x per-host rate can't exceed the stated global ceiling.
+    workers = resolve_host_workers(scope)
     with timed(state, "stage6_5.ffuf_total"):
         def _ffuf_one(host):
             return run_ffuf(host, state, scope, base=(host_base or {}).get(host))

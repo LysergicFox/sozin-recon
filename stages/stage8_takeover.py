@@ -14,11 +14,13 @@ Confirmed-real CLI facts (nuclei v3.11.1): -l for a target list file,
 suppress non-finding noise, -rl for per-second rate limit (same flag
 family as httpx/naabu).
 
-⚠️ (R3) nuclei's -rl is a WHOLE-INVOCATION ceiling, not a real per-host
-cap: the full takeover set is 60+ templates, so one host can absorb the
-entire aggregate budget. This is the same whole-invocation limitation
-originally flagged only for katana, generalized to nuclei by the R3
-resolution - flagged, not fixed this pass (see rate_limits.nuclei_rate_args).
+(R3 CLOSED) nuclei's -rl is a whole-invocation ceiling, so this stage now runs
+nuclei ONE HOST PER INVOCATION (see _run_nuclei_per_host), parallelized across
+distinct hosts by resolve_host_workers() and collapsed to sequential under a
+global rate scope. With a single target per process the full takeover set (60+
+templates) fires only at that one host, making -rl a TRUE per-host cap - the old
+"one host absorbs the entire aggregate budget" gap is gone (see
+rate_limits.nuclei_rate_args).
 
 Confirmed-real behavior: an empty-findings run against zonetransfer.me +
 www.zonetransfer.me returned empty stdout with exit code 0 - there is no
@@ -62,6 +64,7 @@ from pathlib import Path
 from state import RunState, TakeoverFinding, ReconFinding
 from rate_limits import nuclei_rate_args
 from http_headers import header_args
+from stages.parallelism import bounded_parallel_map, resolve_host_workers
 
 logger = logging.getLogger(__name__)
 
@@ -109,47 +112,60 @@ def _run_tool(cmd: list[str], timeout: int = DEFAULT_TIMEOUT_SECONDS) -> tuple[s
         return "", f"{cmd[0]} not found on PATH", -1
 
 
-def run_nuclei_takeover(hosts: list[str], state: RunState, scope: dict) -> str:
-    """
-    Run nuclei's full -tags takeover template set against hosts. Returns
-    raw stdout (JSONL, one finding per line - confirmed-real empty string
-    for zero findings, exit code 0).
+def _run_nuclei_per_host(hosts: list[str], state: RunState, scope: dict,
+                         template_args: list[str], raw_prefix: str, label: str) -> str:
+    """(R3 CLOSED) Run nuclei ONE HOST PER INVOCATION, parallelized across distinct
+    hosts by resolve_host_workers() (sequential under a global rate scope). With a
+    single target per process, the full template set fires only at that host, so
+    `-rl <per_host>` is a true per-host cap - no host can absorb a shared
+    multi-host budget. Returns the per-host JSONL stdouts concatenated in stable
+    host order (empty string = zero findings across all hosts), so parse_nuclei_jsonl()
+    is unchanged. Per-host raw archives (raw_prefix_<host>) don't collide (R5); a
+    per-host failure is logged + skipped, never fatal (R7).
 
-    scope is the loaded scope.json dict, passed through for
-    nuclei_rate_args().
-
-    Nonzero exit code is treated as a real failure - this branch is
-    UNVERIFIED (see module docstring), inferred from general CLI
-    convention rather than an observed real nuclei failure.
+    template_args selects the template band (takeover vs the C1 detection set).
+    Nonzero per-host exit is treated as a failure for THAT host - this branch is
+    UNVERIFIED (see module docstring), inferred from general CLI convention.
     """
     if not hosts:
         return ""
 
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
-        f.write("\n".join(hosts))
-        targets_path = f.name
+    rate = nuclei_rate_args(scope)
+    workers = resolve_host_workers(scope)
+    logger.info("%s rate limit (per host): %s; host workers=%d", label, rate.note, workers)
 
-    rate = nuclei_rate_args(scope, host_count=len(hosts))
-    logger.info("nuclei takeover rate limit: %s", rate.note)
+    def _scan_one(host: str) -> str:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            f.write(host)
+            targets_path = f.name
+        try:
+            cmd = ["nuclei", "-l", targets_path, *template_args, "-jsonl", "-silent",
+                   *rate.extra_args, *header_args(scope)]   # program-mandated headers on all target traffic
+            stdout, stderr, code = _run_tool(cmd)
+        finally:
+            Path(targets_path).unlink(missing_ok=True)
+        state.save_raw(STAGE, f"{raw_prefix}_{host}", stdout)   # (R5) per-host archive
+        if code != 0:
+            # UNVERIFIED: real nuclei nonzero-exit behavior hasn't been observed.
+            # Log + drop this host's output rather than raising, so one bad host
+            # doesn't lose the others - matches this stage's defensive posture.
+            logger.error("nuclei (%s) exited %d for %s: %s", label, code, host, stderr[:2000])
+            return ""
+        return stdout
 
-    cmd = ["nuclei", "-l", targets_path, "-tags", "takeover", "-jsonl", "-silent",
-           *rate.extra_args, *header_args(scope)]   # program-mandated headers on all target traffic
+    per_host = bounded_parallel_map(_scan_one, hosts, workers=workers, label=label)
+    # Concatenate in stable seed order; skip empties (zero-findings / failed host).
+    return "\n".join(per_host[h] for h in hosts if per_host.get(h))
 
-    stdout, stderr, code = _run_tool(cmd)
-    state.save_raw(STAGE, "nuclei_takeover", stdout)
 
-    Path(targets_path).unlink(missing_ok=True)
-
-    if code != 0:
-        logger.error("nuclei exited %d: %s", code, stderr[:2000])
-        # UNVERIFIED: real nuclei nonzero-exit behavior hasn't been
-        # observed. Logging and returning empty rather than raising, so a
-        # single bad run doesn't hard-crash the whole stage - matches
-        # this stage's overall defensive posture given the unverified
-        # parser below. Revisit once a real failure case is seen.
-        return ""
-
-    return stdout
+def run_nuclei_takeover(hosts: list[str], state: RunState, scope: dict) -> str:
+    """
+    Run nuclei's full -tags takeover template set against hosts (one invocation
+    per host - see _run_nuclei_per_host). Returns raw JSONL stdout concatenated
+    across hosts (confirmed-real empty string for zero findings, exit code 0).
+    """
+    return _run_nuclei_per_host(hosts, state, scope, ["-tags", "takeover"],
+                                "nuclei_takeover", "nuclei takeover")
 
 
 def parse_nuclei_jsonl(raw_output: str) -> list[dict]:
@@ -193,28 +209,15 @@ def parse_nuclei_jsonl(raw_output: str) -> list[dict]:
 
 def run_nuclei_detection(hosts: list[str], state: RunState, scope: dict) -> str:
     """(C1) Run the DETECTION-ONLY nuclei set (exposures/misconfig/panels, with
-    default-logins/intrusive/fuzzing/dos excluded) against hosts. Returns raw
-    JSONL stdout (empty string = zero findings, exit 0 — the confirmed signal).
-    Separate invocation from takeover so each is R7-isolated and the raw archives
-    don't collide. Same rate model (nuclei -rl); ⚠️ the R3 whole-invocation gap is
-    worse here (larger template set) — flagged, bounded by the stage timeout."""
-    if not hosts:
-        return ""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
-        f.write("\n".join(hosts))
-        targets_path = f.name
-    rate = nuclei_rate_args(scope, host_count=len(hosts))
-    logger.info("nuclei detection rate limit: %s", rate.note)
-    cmd = ["nuclei", "-l", targets_path,
-           "-tags", DETECTION_INCLUDE_TAGS, "-etags", DETECTION_EXCLUDE_TAGS,
-           "-jsonl", "-silent", *rate.extra_args, *header_args(scope)]   # program-mandated headers on all target traffic
-    stdout, stderr, code = _run_tool(cmd)
-    state.save_raw(STAGE, "nuclei_detection", stdout)
-    Path(targets_path).unlink(missing_ok=True)
-    if code != 0:
-        logger.error("nuclei detection exited %d: %s", code, stderr[:2000])
-        return ""
-    return stdout
+    default-logins/intrusive/fuzzing/dos excluded) against hosts, one invocation
+    per host (see _run_nuclei_per_host). Returns raw JSONL stdout concatenated
+    across hosts (empty string = zero findings, exit 0 — the confirmed signal).
+    (R3 CLOSED) per-host invocation makes `-rl` a true per-host cap even though
+    this template set is larger than takeover's."""
+    return _run_nuclei_per_host(
+        hosts, state, scope,
+        ["-tags", DETECTION_INCLUDE_TAGS, "-etags", DETECTION_EXCLUDE_TAGS],
+        "nuclei_detection", "nuclei detection")
 
 
 def parse_nuclei_detection_jsonl(raw_output: str) -> list[dict]:
