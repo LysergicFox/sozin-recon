@@ -179,8 +179,11 @@ deliberately open, consented DNS-testing domain).
 ## Known gaps
 
 - Runs **one pass** — loop-until-stable is not built here.
-- Content discovery's WAF guard keys on 403; a **200-with-JS-challenge** WAF
-  won't trip it (named, not closed).
+- Content discovery's WAF handling covers both a 403 flood (ffuf `-sf`) and a
+  **200-with-JS-challenge** wall (a pre-flight retreat when the host's stage-4
+  fingerprint matches a known interstitial — Cloudflare "Just a moment", DDoS-Guard,
+  etc.). Residual: detection is marker-based, so a challenge whose title/body preview
+  carries no recognizable marker could still be fuzzed.
 - `nuclei` takeover-finding parse path is unverified against a real positive.
 - Screenshots (C2) depend on a system Chromium and may need per-environment
   tuning inside the container.
