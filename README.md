@@ -93,14 +93,24 @@ $EDITOR runs/example/scope.json   # set your real in-scope allowlist + rate_limi
 Run the pipeline (the run dir is a mounted volume, so state stays on the host):
 
 ```bash
-docker run --rm -v "$PWD/runs:/runs" sozin-recon --run-dir /runs/example
+docker run --rm -v "$PWD/runs:/runs" \
+  -e SOZIN_RUNDIR_UID=$(id -u) -e SOZIN_RUNDIR_GID=$(id -g) \
+  sozin-recon --run-dir /runs/example
 ```
 
 Or via compose:
 
 ```bash
-docker compose run --rm recon --run-dir /runs/example
+SOZIN_RUNDIR_UID=$(id -u) SOZIN_RUNDIR_GID=$(id -g) \
+  docker compose run --rm recon --run-dir /runs/example
 ```
+
+> The container runs as **root** (so the baked CLIs + SecLists under `/root`
+> resolve), which would leave the `chmod 700` run dir root-owned and unreadable
+> from the host. `SOZIN_RUNDIR_UID`/`GID` hand the finished run dir back to your
+> host user — same 700 mode, host-readable (`sqlite3 assets.db` etc.). Omit them
+> to leave it root-owned. A local (no-Docker) run already owns its files, so it
+> ignores these.
 
 ## Quick start (local / no Docker)
 
@@ -125,9 +135,10 @@ Exactly one is required:
   canonical `scope.json` in as the run's immutable snapshot, and runs there.
 
 The `--target-dir` layout (one target folder, many runs under `runs/`) is what
-**`sozin-dashboard`** consumes. Docker note: bind-mount the target folder and
-pass its in-container path, e.g.
-`-v "$PWD/targets:/targets" … --target-dir /targets/hackerone/acme`.
+**`sozin-dashboard`** consumes. Docker note: bind-mount the target folder, pass
+its in-container path, and set the hand-back UID/GID so the new run dir is
+host-readable, e.g.
+`-e SOZIN_RUNDIR_UID=$(id -u) -e SOZIN_RUNDIR_GID=$(id -g) -v "$PWD/targets:/targets" … --target-dir /targets/hackerone/acme`.
 
 ```bash
 python3 main.py --target-dir /path/to/bugbounty/targets/hackerone/acme
@@ -178,12 +189,17 @@ deliberately open, consented DNS-testing domain).
 
 ## Known gaps
 
-- Runs **one pass** — loop-until-stable is not built here.
-- Content discovery's WAF handling covers both a 403 flood (ffuf `-sf`) and a
+- Runs **one pass** — loop-until-stable is not built here. Note this materially
+  under-covers stages whose ideal input is produced downstream: e.g. x8 hidden-param
+  discovery (stage 5) never fuzzes the endpoints ffuf/API/archived-JS find later, so
+  a second pass would recover them (observed ~3.5× more x8 candidates on a run where
+  those endpoints were already present).
+- Content discovery's WAF handling covers a 403 flood (ffuf `-sf`), a near-total
+  **403-wall** the `-sf` window misses (a block-ratio backstop), and a
   **200-with-JS-challenge** wall (a pre-flight retreat when the host's stage-4
   fingerprint matches a known interstitial — Cloudflare "Just a moment", DDoS-Guard,
-  etc.). Residual: detection is marker-based, so a challenge whose title/body preview
-  carries no recognizable marker could still be fuzzed.
+  etc.). Residual: the JS-challenge check is marker-based, so a challenge whose
+  title/body preview carries no recognizable marker could still be fuzzed.
 - `nuclei` takeover-finding parse path is unverified against a real positive.
 - Screenshots (C2) depend on a system Chromium and may need per-environment
   tuning inside the container.

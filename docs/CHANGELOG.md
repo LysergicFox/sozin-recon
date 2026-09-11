@@ -5,6 +5,28 @@ Compact, newest-first. Status tags: **DONE** / **DESIGN** (locked, not built) /
 
 ---
 
+## 2026-09-11 — ffuf 403-wall backstop + Docker run-dir hand-back: DONE
+
+Two fixes surfaced by the fresh ginandjuice confirming run (clean exit, all
+earlier fixes verified live).
+
+- **`stages/stage_content_discovery.py`** — `_detect_waf` gains a `403_ratio`
+  backstop: a host that 403-walls most probes without tripping ffuf's `-sf` flood
+  message (real case: an AWS ELB/WAF returned a steady 403 stream `-sf` tolerated,
+  ~98% of matched responses 403) is now flagged `waf_suspected`. Guarded by a
+  threshold (>=90%) and a min sample (>=20) so a few incidental 403s don't false-flag.
+  Verified on the real run's ffuf output (59/60 → flagged).
+- **`main.py`** — `handback_run_dir()`: the container runs as root (baked tools +
+  SecLists live under `/root`), so the R8 chmod-700 run dir was root-owned and
+  unreadable from the host. Setting `SOZIN_RUNDIR_UID`/`GID` hands the finished run
+  dir back to the host user — same 700 mode, host-readable — matching a local run.
+  Opt-in, best-effort, never fails the run. Wired into `docker-compose.yml` + README.
+- **Finding (not a bug):** the run's x8 param count (29) vs a re-run-assembled prior
+  DB (90) confirmed the one-pass coverage gap — x8 (stage 5) never fuzzes endpoints
+  ffuf/API/archived-JS discover later; a 2nd pass recovers them (~3.5× candidates).
+  Concrete argument for loop-until-stable (R14). See README known-gaps.
+- Tests: `test_waf_preflight.py` (403_ratio backstop) + `test_handback.py`. 183 passed.
+
 ## 2026-09-10 — stage 6.5 pre-flight WAF-challenge retreat: DONE
 
 Closes the documented blind spot that ffuf's `-sf` breaker only catches 403

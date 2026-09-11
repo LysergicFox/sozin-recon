@@ -93,6 +93,14 @@ EXTENSIONS: list[str] = []
 _WAF_403_FLOOD_SIGNAL = "unusual amount of 403 responses"
 _WAF_MAXTIME_SIGNAL = "Maximum running time for this job reached"
 
+# Backstop for a WAF that 403-walls most probes WITHOUT tripping ffuf's `-sf`
+# flood message (observed on a real run: an AWS ELB/WAF returned a steady 403
+# stream `-sf`'s window tolerated, so `-sf` stayed quiet while ~98% of matched
+# responses were 403). A near-total 403 ratio over a meaningful sample is itself
+# a WAF signal, independent of the stderr message.
+_WAF_403_RATIO_THRESHOLD = 0.9     # >=90% of matched responses are 403
+_WAF_403_RATIO_MIN_SAMPLES = 20    # ...and enough matches that the ratio is meaningful
+
 # Pre-flight JS-challenge / interstitial markers (case-insensitive substrings).
 # These indicate the ENTIRE response is a challenge/soft-block wall (Cloudflare,
 # DDoS-Guard, Imperva, etc.), so fuzzing the host just hammers a challenge page —
@@ -175,14 +183,20 @@ def _detect_waf(stderr: str, results: list[dict]) -> dict:
     determination about the host (trusted metadata), NOT target-derived.
 
     B1 always RETREATS from a suspected WAF — it never engages/bypasses one; the
-    flag is intel handed to primitive (see PRIMITIVE_WAF_HANDLING_DESIGN.md).
+    flag is intel handed to a downstream consumer.
+
+    Three signals, in priority order:
+      - `403_flood` — ffuf's `-sf` emitted its stderr flood message (also stops ffuf).
+      - `maxtime`   — ffuf hit its `-maxtime-job` cap.
+      - `403_ratio` — BACKSTOP: `-sf` stayed quiet but >=`_WAF_403_RATIO_THRESHOLD`
+        of a meaningful sample (>=`_WAF_403_RATIO_MIN_SAMPLES`) of matched responses
+        were 403 — a WAF 403-walling the scan without tripping `-sf`.
 
     `-sf` keys on 403 floods (a WAF serving 403s). The complementary
     200-with-JS-challenge case (a WAF serving a 200 challenge wall, which `-sf`
-    can't see) is now handled UP FRONT by the pre-flight _challenge_signal() check
-    in run_content_discovery(): such a host is retreated-from before fuzzing, so it
-    never reaches this post-hoc path. This detector still covers 403 floods and the
-    maxtime backstop for hosts that pass pre-flight."""
+    can't see) is handled UP FRONT by the pre-flight _challenge_signal() check in
+    run_content_discovery(): such a host is retreated-from before fuzzing, so it
+    never reaches this post-hoc path."""
     signal = None
     if _WAF_403_FLOOD_SIGNAL in stderr:
         signal = "403_flood"
@@ -191,6 +205,11 @@ def _detect_waf(stderr: str, results: list[dict]) -> dict:
     total = len(results)
     n403 = sum(1 for r in results if r.get("status") == 403)
     ratio = (n403 / total) if total else None
+    # Ratio backstop: a host 403-walling most probes without an `-sf` message.
+    if (signal is None and ratio is not None
+            and total >= _WAF_403_RATIO_MIN_SAMPLES
+            and ratio >= _WAF_403_RATIO_THRESHOLD):
+        signal = "403_ratio"
     return {"waf_suspected": signal is not None, "waf_signal": signal, "waf_block_ratio": ratio}
 
 

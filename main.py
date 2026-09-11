@@ -20,6 +20,7 @@ affirmative rate_limit block (R2).
 """
 
 import argparse
+import os
 import shutil
 import sys
 import uuid
@@ -802,6 +803,35 @@ def resolve_run_dir(args) -> Path:
     return Path(args.run_dir)
 
 
+def handback_run_dir(run_dir: Path) -> None:
+    """Deployment aid: when the pipeline runs as root inside the Docker image, the
+    run dir it creates is root-owned and (per R8) chmod 700 — unreadable from the
+    host, so the operator can't `sqlite3 assets.db` / read `raw/` without sudo.
+    If `SOZIN_RUNDIR_UID` (and optionally `SOZIN_RUNDIR_GID`, default = UID) is set,
+    recursively hand the run dir back to that owner so a host run is byte-for-byte
+    like a local (non-Docker) run: same **700 mode**, host-user-owned. Opt-in and
+    best-effort — a no-op when unset (a local run already owns its files), and it
+    never fails the run (a chown error is logged, not raised). Only ownership
+    changes; the 700 mode is untouched."""
+    uid_raw = os.environ.get("SOZIN_RUNDIR_UID")
+    if not uid_raw:
+        return
+    try:
+        uid = int(uid_raw)
+        gid = int(os.environ.get("SOZIN_RUNDIR_GID", uid_raw))
+    except ValueError:
+        logger.warning("SOZIN_RUNDIR_UID/GID not integers (%r/%r) - skipping run-dir hand-back",
+                       uid_raw, os.environ.get("SOZIN_RUNDIR_GID"))
+        return
+    try:
+        os.chown(run_dir, uid, gid)
+        for child in run_dir.rglob("*"):
+            os.chown(child, uid, gid)
+        logger.info("Handed run dir back to uid:gid %d:%d - host-readable (mode 700 preserved)", uid, gid)
+    except OSError as exc:
+        logger.warning("Could not hand run dir back to %d:%d (%r) - leaving as-is", uid, gid, exc)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Recon agent - stages 1, 3, 4, 5, 6, 7, 8, 9")
     src = parser.add_mutually_exclusive_group(required=True)
@@ -848,6 +878,10 @@ def main():
         state.update_run_state(status="error", failed_at_stage=current_stage, error=repr(exc))
         logger.exception("Recon run failed at stage %s - run_state.json marked 'error'", current_stage)
         raise
+    finally:
+        # Hand the run dir back to the host user (Docker deployment aid) whether the
+        # run finished or errored, so its partial output is inspectable either way.
+        handback_run_dir(run_dir)
 
 
 if __name__ == "__main__":

@@ -1,14 +1,23 @@
 # Usage:
 #   docker compose build
-#   docker compose run --rm recon --run-dir /runs/example
+#   SOZIN_RUNDIR_UID=$(id -u) SOZIN_RUNDIR_GID=$(id -g) \
+#     docker compose run --rm recon --run-dir /runs/example
 #
 # The ./runs directory on the host is mounted at /runs in the container, so
 # assets.db / raw/ / run_state.json stay inspectable on the host and are never
 # baked into the image. Put your scope.json at ./runs/<name>/scope.json first.
+#
+# The container runs as root (so the baked tools + SecLists under /root work),
+# which would leave the chmod-700 run dir root-owned and unreadable from the host.
+# Setting SOZIN_RUNDIR_UID/GID (as above) hands the finished run dir back to your
+# host user — same 700 mode, host-readable. Omit them to leave it root-owned.
 services:
   recon:
     build: .
     image: sozin-recon
     volumes:
       - ./runs:/runs
+    environment:
+      SOZIN_RUNDIR_UID: "${SOZIN_RUNDIR_UID:-}"
+      SOZIN_RUNDIR_GID: "${SOZIN_RUNDIR_GID:-}"
     # Recon only makes outbound requests to in-scope targets; no ports exposed.
