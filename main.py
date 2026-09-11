@@ -34,6 +34,7 @@ from scope_gate import (
 )
 from rate_limit_gate import check_run_not_blocked
 from http_headers import required_headers
+from url_hygiene import is_malformed_url_asset
 from stages.stage1_passive import run_stage1
 from stages.stage3_active_dns import run_stage3
 from stages.stage4_live_probing import run_stage4
@@ -254,6 +255,30 @@ def persist_records(state: RunState, records: dict) -> None:
     )
 
 
+def drop_malformed_url_assets(found: list[Asset], stage_num: int) -> list[Asset]:
+    """Ingestion hygiene: drop url/js_file assets whose value is crawl/history
+    noise (HTML fragments, stray backslashes) rather than a real endpoint — see
+    url_hygiene.is_malformed_url_asset. Applied ONCE here, before scope-gating,
+    so noise never bloats assets.db, the review queue, or downstream stages.
+    Order-preserving; non-url asset types pass through untouched. Every drop is
+    logged (capped sample + total) so the filter stays auditable."""
+    clean: list[Asset] = []
+    dropped: list[str] = []
+    for a in found:
+        if a.type in ("url", "js_file") and is_malformed_url_asset(a.value):
+            dropped.append(a.value)
+            continue
+        clean.append(a)
+    if dropped:
+        SAMPLE = 10
+        logger.info(
+            "Stage %s: dropped %d malformed url asset(s) at ingestion "
+            "(crawl/history noise, not real endpoints); showing up to %d: %s",
+            stage_num, len(dropped), SAMPLE, dropped[:SAMPLE],
+        )
+    return clean
+
+
 def run_stage_and_report(stage_num: int, stage_name: str, found: list[Asset],
                           patterns: ScopePatterns, state: RunState) -> list[Asset]:
     """
@@ -264,6 +289,7 @@ def run_stage_and_report(stage_num: int, stage_name: str, found: list[Asset],
     logger.info("Stage %s (%s) raw discovery count (pre-dedupe, pre-scope): %d",
                 stage_num, stage_name, len(found))
 
+    found = drop_malformed_url_assets(found, stage_num)
     found = apply_scope_gate(found, patterns, state)
     newly_added = state.add_assets(found)
     logger.info("Newly added assets after de-dupe: %d", len(newly_added))

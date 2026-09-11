@@ -37,6 +37,7 @@ from rate_limits import x8_rate_args
 from http_headers import x8_header_args
 from stages.parallelism import bounded_parallel_map, resolve_max_workers
 from destructive_paths import is_destructive_path
+from url_hygiene import is_malformed_url_asset
 
 logger = logging.getLogger(__name__)
 
@@ -58,9 +59,10 @@ _X8_SKIP_EXTENSIONS = {
     ".mp4", ".webm", ".mp3", ".wav", ".ogg", ".pdf", ".zip", ".gz", ".tar",
     ".rss", ".xml", ".txt",
 }
-# Substrings that mark a crawl/history-noise "URL" (HTML fragments, backslashes)
-# that isn't a real endpoint — e.g. gau/wayback returned `/%3C/a%3E` (</a>).
-_X8_NOISE_MARKERS = ("<", ">", "\\", "%3c", "%3e", "%5c")
+# Crawl/history-noise "URLs" (HTML fragments, stray backslashes) that aren't real
+# endpoints — e.g. gau/wayback returned `/%3C/a%3E` (</a>). Detection is shared
+# with ingestion (url_hygiene): path-scoped, so a legit endpoint carrying a payload
+# in its QUERY (e.g. /?search=%3Cscript%3E...) is kept as an x8 target.
 # SAFETY: skip param-fuzzing endpoints whose path names a state-changing action
 # (delete/deactivate/reset-password/…) — recon is non-destructive, but x8 sends
 # many requests at an endpoint, and an app acting on GET could be triggered. The
@@ -89,8 +91,7 @@ def x8_candidate_urls(live_urls: list[str]) -> list[str]:
     per_host: dict[str, int] = defaultdict(int)
     out: list[str] = []
     for url in live_urls:
-        low = url.lower()
-        if any(m in low for m in _X8_NOISE_MARKERS):
+        if is_malformed_url_asset(url):
             continue
         parsed = urlparse(url)
         host = parsed.hostname or ""
