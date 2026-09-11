@@ -6,12 +6,13 @@ building a new stage or extending an existing one. `../README.md` covers
 what the recon engine does and how to run it; this covers how to safely
 change it.
 
-> **Repo layout note:** **shipped project docs live in `docs/`; design/planning docs
-> live in `design_docs/`** (both tracked in the repo); the single-stage re-run
-> scripts live in `testing/` (`run_*.py`); `README.md` stays at the repo root. The
-> design/planning docs referenced below (`RECON_AGENT_DESIGN.md`, `RECON_ENHANCEMENTS.md`,
-> `RECON_RESOLUTIONS_IMPL_PLAN.md`, `RECON_TRACK_D_DESIGN.md`, the `RECON_B1`/`RECON_B2`
-> build specs) all live in `design_docs/`.
+> **Repo layout note:** **shipped project docs live in `docs/`** (tracked); the
+> single-stage re-run scripts live in `testing/` (`run_*.py`, tracked); `README.md`
+> stays at the repo root. The design/planning docs referenced throughout this file
+> (`RECON_AGENT_DESIGN.md`, `RECON_ENHANCEMENTS.md`, `RECON_RESOLUTIONS_IMPL_PLAN.md`,
+> `RECON_TRACK_D_DESIGN.md`, the `RECON_B1`/`RECON_B2` build specs, the R1–R16 review
+> record) live in `design_docs/`, which is **local-only / git-ignored** — dev history
+> kept on disk, not shipped in the repo.
 
 ---
 

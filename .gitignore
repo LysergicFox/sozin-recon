@@ -27,3 +27,7 @@ scope.json
 # still runs (python3 -m pytest testing/), but are kept out of the repo. The
 # single-stage re-runners (testing/run_*.py) ARE tracked and shipped.
 testing/test_*.py
+
+# Internal design/planning docs + the R1–R16 review record are dev-local history,
+# kept on disk but not shipped in the repo.
+design_docs/

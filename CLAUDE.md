@@ -23,7 +23,8 @@ and `docs/STATE_SCHEMA.md` for the on-disk format.
   (which **import** the shared `run_stageN_and_report()` from `main.py`, never
   reimplement it).
 - `docs/` — shipped docs (CONTRIBUTING, STATE_SCHEMA, CHANGELOG).
-- `design_docs/` — design specs + the R1–R16 adversarial review record.
+- `design_docs/` — design specs + the R1–R16 adversarial review record
+  (local-only, git-ignored — dev history, not shipped in the repo).
 - `Dockerfile` / `docker-compose.yml` — the self-contained image (all external
   CLIs + SecLists at `~/tools/SecLists` + nuclei templates baked in).
 

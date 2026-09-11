@@ -171,8 +171,7 @@ Minimal shape (full example in `scope.example.json`):
 This engine was built to a strict staged-verification discipline — every stage:
 build → mocked tests → **real run against a consented target** → fix → confirming
 run. Tool interfaces are never trusted from `--help`; they're confirmed against
-real output. See `docs/CONTRIBUTING.md` and the `design_docs/` set (design specs,
-the R1–R16 adversarial review record, the enhancement roadmap).
+real output. See `docs/CONTRIBUTING.md` for the working agreements.
 
 Standing consented test target for recon verification: `zonetransfer.me` (a
 deliberately open, consented DNS-testing domain).
