@@ -300,10 +300,10 @@ def run_stage8(hosts: list[str], state: RunState, current_pass: int, scope: dict
     scope is the loaded scope.json dict, threaded through to
     run_nuclei_takeover() for rate-limit resolution.
 
-    asset_lookup optionally maps hostname -> asset_id for FK linkage
-    (UNVERIFIED naive exact-string match - see module docstring). A host
-    with no match in asset_lookup still produces a finding, just with
-    asset_id=None rather than being dropped.
+    asset_lookup optionally maps hostname -> asset_id for FK linkage by exact
+    host match (verified: nuclei's `host` field is a bare hostname, so this links
+    correctly - see module docstring). A host with no match in asset_lookup still
+    produces a finding, just with asset_id=None rather than being dropped.
     """
     try:
         raw = run_nuclei_takeover(hosts, state, scope)

@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """
-Recon agent entrypoint - stages 1, 3, 4, 5, 6, 7, 8, 9.
+Recon agent entrypoint - the stage sequencer.
 
-Runs the staged pipeline once (no loop-until-stable yet), scope-gating each
-stage's discoveries into assets.db and persisting Track-D source records
-(parameters/endpoints/secrets/services) alongside. See RECON_AGENT_DESIGN.md
-for the architecture and RECON_TRACK_D_DESIGN.md for the source-record model.
+Runs the pipeline loop-until-stable (R14): PRE-LOOP {stage 1} -> LOOP
+{3,4,F5,5,6,6.5,7} repeated until the asset graph converges -> FINALIZE once
+{4.5,8,9,C2,C5,10,11 + the deterministic C4/F1/A2/F6 finalizers}. Each stage's
+discoveries are scope-gated into assets.db and Track-D source records
+(parameters/endpoints/secrets/services) are persisted alongside. See README.md
+for the stage/tool map and docs/STATE_SCHEMA.md for the on-disk format (the
+loop design + Track-D model live in the dev-local design_docs/).
 
 Usage:
     python3 main.py --run-dir   /path/to/run_directory
@@ -58,7 +61,7 @@ from stages.stage_screenshots import run_screenshots
 from stages.cve_candidates import run_cve_candidates
 from logging_setup import setup_logging_with_banner
 
-logger = setup_logging_with_banner("recon_agent", version="v0")
+logger = setup_logging_with_banner("recon_agent", version="v1.0")
 
 
 def extract_root_domains(scope: dict) -> list[str]:

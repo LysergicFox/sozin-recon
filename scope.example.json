@@ -21,5 +21,8 @@
   },
   "performance": {
     "max_workers": 5
+  },
+  "run_options": {
+    "max_passes": 4
   }
 }

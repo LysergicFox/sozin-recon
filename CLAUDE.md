@@ -6,10 +6,13 @@ exploitation.** It discovers, enriches, prioritizes, and flags candidates — it
 never tests, exploits, uses a credential, or confirms a vulnerability.
 
 ## What it is
-`python3 main.py --run-dir <dir>` runs one pass of stages 1→3→4→(4.5)→5→6→
-(6.5)→7→8→9→(C2)→(C5)→10→11 plus deterministic finalizers (C4/F1/A2/F6).
-Stage 2 is intentionally skipped. See `README.md` for the full stage/tool map
-and `docs/STATE_SCHEMA.md` for the on-disk format.
+`python3 main.py --run-dir <dir>` runs the pipeline **loop-until-stable**:
+PRE-LOOP {1} → LOOP {3→4→(F5)→5→6→(6.5)→7} repeated until the asset graph
+converges → FINALIZE once {(4.5)→8→9→(C2)→(C5)→10→11 + deterministic finalizers
+C4/F1/A2/F6}. Stage 2 is intentionally skipped. See `README.md` for the full
+stage/tool map, `docs/STATE_SCHEMA.md` for the on-disk format, and the loop
+design (loop body, R14 convergence guard, D5 harvest, L3 frontier seeding) in
+`design_docs/RECON_LOOP_DESIGN.md`.
 
 ## Layout
 - `main.py` — the stage-sequencer entrypoint (`run_pipeline`).

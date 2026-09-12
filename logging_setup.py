@@ -137,7 +137,7 @@ def _gradient_color(step: int, total: int) -> str:
     return f"#{r:02x}{g:02x}{b:02x}"
 
 
-def print_banner(version: str = "v0", console: Console | None = None) -> None:
+def print_banner(version: str = "v1.0", console: Console | None = None) -> None:
     """
     Print the SOZIN ASCII wordmark once at process startup, nuclei/
     paramspider-style: big block-letter logo (pyfiglet, ansi_shadow
@@ -163,7 +163,7 @@ def print_banner(version: str = "v0", console: Console | None = None) -> None:
 
 
 def setup_logging_with_banner(logger_name: str = "recon_agent", level: int = logging.INFO,
-                               version: str = "v0") -> logging.Logger:
+                               version: str = "v1.0") -> logging.Logger:
     """
     Convenience wrapper: print_banner() followed by setup_logging().
     Banner prints first (raw, no log-level prefix), then the logger is

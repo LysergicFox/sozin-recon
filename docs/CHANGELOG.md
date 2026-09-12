@@ -5,6 +5,35 @@ Compact, newest-first. Status tags: **DONE** / **DESIGN** (locked, not built) /
 
 ---
 
+## 2026-09-12 — v1.0: all five readiness caveats closed 🚀
+
+sozin-recon reaches **v1.0** — the standalone, scripted, deterministic recon
+engine is feature-complete for its designed scope, with every readiness caveat
+resolved and each fix validated on a live consented target (zonetransfer.me,
+ginandjuice.shop):
+
+1. **Per-host rate limiting** — fixed; per-host katana + nuclei verified live.
+2. **nuclei takeover parser** — verified against real nuclei v3.11.1 output
+   (see the entry below).
+3. **One-pass coverage gap** — closed by **loop-until-stable** (R14) +
+   **incremental frontier seeding** (L3): the discovery stages loop until the
+   asset graph converges, so x8 re-fuzzes downstream-discovered endpoints
+   (validated 3.3–3.65× more params), and pass ≥ 2 only re-processes new units
+   (~half the time/traffic).
+4. **ffuf WAF handling** — 403-flood (`-sf`), 403-wall (block-ratio backstop),
+   and 200-JS-challenge (pre-flight retreat) all covered.
+5. **`--target-dir` run mode** — confirmed working (the earlier "not run" note
+   was stale).
+
+Bonus: the **Docker run-dir hand-back** (`SOZIN_RUNDIR_UID/GID` returns the run
+dir to the host user) is now confirmed end-to-end on the v1 loop runs.
+
+Scope boundary unchanged and intentional: **no LLM calls, no exploitation** —
+recon discovers, enriches, prioritizes, and flags; it never tests, exploits,
+uses a credential, or confirms a vulnerability. Named-deferred breadth items
+(LLM scope/review tiers, trufflehog, chaos/asnmap, origin-IP discovery, the A1
+brief) remain the documented post-v1 roadmap — see README known-gaps.
+
 ## 2026-09-12 — nuclei takeover parser: VERIFIED against real output (Caveat 2)
 
 The stage-8 takeover JSONL parser shipped UNVERIFIED for months (a real positive
