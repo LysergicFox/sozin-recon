@@ -207,10 +207,15 @@ until the LLM tier exists.
 ```jsonc
 {
   "run_id": "…",
-  "current_stage": 9,
-  "current_pass": 1,
-  "status": "stage_complete",        // "running" | "paused_needs_review" | "stage_complete" | "stable" | "error"
-  "passes_completed": 1,
+  "current_stage": 11,
+  "current_pass": 3,                 // advances with each loop pass (loop-until-stable)
+  "status": "stable",                // "running" | "paused_needs_review" | "stage_complete" | "stable" | "error"
+  "passes_completed": 3,             // number of loop passes actually run
+  "pass_deltas": [                   // per-pass stability trail (loop-until-stable) — the exit reason, auditable
+    { "pass": 1, "delta": 80 },      // delta = genuinely-new ASSETS that pass (records excluded)
+    { "pass": 2, "delta": 7 },
+    { "pass": 3, "delta": 0 }        // delta==0 → converged → status "stable"
+  ],
   "last_updated": "…",
   "failed_at_stage": null            // (R7) set alongside status="error" on an unhandled crash
 }
@@ -218,7 +223,17 @@ until the LLM tier exists.
 
 **(R7, implemented)** `main()` wraps the pipeline so an unhandled exception sets
 `status="error"` + `failed_at_stage` before re-raising. Paired with per-tool fault
-isolation across stages 3/4/6/8/9. `"stable"` reserved for the unbuilt loop.
+isolation across stages 3/4/6/8/9.
+
+**Loop-until-stable (R14, implemented).** The pipeline runs PRE-LOOP {1} once →
+LOOP {3,4,F5,5,6,6.5,7} repeated until the convergence guard fires → FINALIZE
+{4.5,8,9,10,11,+offline finalizers} once. `current_pass`/`passes_completed`
+advance with the loop; `pass_deltas` records each pass's new-asset count.
+Termination: `delta == 0` → `"stable"` (a true fixed point — now reachable);
+else the hard pass cap (`run_options.max_passes`, default 4) or the
+diminishing-returns floor (`max(3, 2% × graph)`) → `"stage_complete"`. `delta`
+counts genuinely-new ASSETS only (Track-D records don't create new seeds). See
+`RECON_LOOP_DESIGN.md`.
 
 ---
 
@@ -236,6 +251,14 @@ fractional stage in the filename)**, **stage 10 (`stage10_openapi_{host}`,
 `.js` extension, not `.json`; `stage11_jsluice_urls_{original}` / `stage11_jsluice_secrets_{original}`
 — B4)**, **stage 4.5 (`stage4.5_cdncheck` — C3)**, **stage 4 (`stage4_dnsx_ptr` — F5)**, and
 **stage 8 (`stage8_nuclei_detection` — C1, separate from `stage8_nuclei_takeover`)**.
+
+**(loop-until-stable, D6)** On a multi-pass run, a stage that re-runs on a later
+pass would otherwise overwrite its own pass-1 raw archive (which
+`secret.raw_log_ref` points at). So **pass 1 keeps the historical filename
+byte-for-byte** (e.g. `raw/stage5_x8_{tag}.json`) and **pass ≥ 2 appends `__p{N}`**
+(`raw/stage5_x8_{tag}__p2.json`, `raw/stage6.5_ffuf_{host}__p3.json`). Pass-1
+layout is unchanged, so existing consumers are unaffected; each pass's raw output
+is preserved.
 
 Host assets (`subdomain`) also gain agent-authored, **trusted** metadata keys from
 these stages: `waf_suspected`/`waf_signal`/`waf_block_ratio` (B1 — NOT in

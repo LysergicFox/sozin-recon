@@ -5,6 +5,46 @@ Compact, newest-first. Status tags: **DONE** / **DESIGN** (locked, not built) /
 
 ---
 
+## 2026-09-12 — loop-until-stable (Caveat 3 / R14): DONE
+
+The pipeline now loops the discovery stages until the asset graph stabilizes,
+then runs the finalizers once — closing the one-pass coverage gap (esp. x8
+hidden-param discovery never seeing endpoints ffuf/crawl/JS surface downstream).
+Design: `RECON_LOOP_DESIGN.md` (all sign-off calls resolved). Landed as Batches
+L0 (plumbing) + L1 (the loop).
+
+- **Phases:** PRE-LOOP {1} once → LOOP {3,4,F5,5,6,6.5,7} until stable → FINALIZE
+  {4.5,E4,8,9,C2,C5,10,11,C4,F1,A2,F6} once over the complete graph. Stage 1 is
+  pre-loop (D1) — it seeds only from constant root domains, so re-running adds
+  only non-deterministic flap. 4.5/8/9/10/11/C2 + offline finalizers verified to
+  have no loop-phase consumer, so they run once after convergence.
+- **Convergence guard (R14):** `delta == 0` → status `"stable"` (now reachable);
+  else hard pass cap (`run_options.max_passes`, default 4, clamp [1,8]) or the
+  diminishing-returns floor `max(3, 2%×graph)` → `"stage_complete"`. `delta`
+  counts genuinely-new ASSETS only (records don't create seeds). `run_state.json`
+  gains `pass_deltas` (per-pass trail).
+- **D5 — final x8 harvest:** on an un-converged exit only, one record-only x8 run
+  over the full URL set (the last pass's new URLs were never x8-fuzzed). A clean
+  exit needs none.
+- **D6 — per-pass raw archives:** `save_raw`/`raw_path` use an ambient
+  `RunState.current_pass` cursor; pass 1 filenames unchanged, pass ≥ 2 get `__pN`
+  — a later pass never overwrites an earlier pass's raw (which `raw_log_ref`
+  references).
+- **🐛→✅ process:** `docker compose run` reuses the stale image — must
+  `docker compose build` after code changes (caught the first smoke run testing
+  old code).
+- **Validated live (docker):** zonetransfer smoke → 2 passes, converged, `stable`,
+  D6 files coexist, handback ✓. ginandjuice → **3 passes** (delta 80→7→0),
+  `stable`; **x8 params 26 / +55 / +4 = 85 vs 26 single-pass = 3.3× more** — the
+  Caveat 3 win reproduced; handback ✓, no faults. Docker handback thereby
+  confirmed end-to-end.
+- **Named residuals (README known-gaps):** full-graph re-seed re-runs 4/6/6.5 on
+  the stable host set each pass (efficiency; incremental frontier seeding
+  deferred); `timings` keeps only the last pass's per-stage value (cosmetic).
+- Tests: new `testing/test_loop.py` (11) — raw pass-suffix + no-overwrite,
+  `record_pass_delta`, guard precedence, `resolve_max_passes`, converge/cap/floor
+  drivers, D5-only-when-unconverged, `discovered_in_pass` threading. **194 passed.**
+
 ## 2026-09-11 — ffuf 403-wall backstop + Docker run-dir hand-back: DONE
 
 Two fixes surfaced by the fresh ginandjuice confirming run (clean exit, all

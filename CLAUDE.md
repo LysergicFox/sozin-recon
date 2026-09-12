@@ -39,7 +39,15 @@ and `docs/STATE_SCHEMA.md` for the on-disk format.
 6. Raw tool output archived verbatim; curated data derived from it. Never store
    a raw secret — fingerprint + `raw_log_ref` only.
 
-Standing consented recon test target: `zonetransfer.me`.
+Standing consented recon test targets (each with a role):
+- `zonetransfer.me` — thin HTTP surface / DNS + zone-transfer target. Use as the
+  quick **convergence / clean-exit smoke test** (fast; loop should reach
+  `stable` in ≤2 passes).
+- `ginandjuice.shop` — PortSwigger's deliberately-scannable demo shop; rich
+  URL/JS/param surface. Use as the **rich-surface target** for anything
+  exercising the URL/param/JS/loop machinery (e.g. the x8 hidden-param win, the
+  loop-until-stable multi-pass path). Target dir:
+  `~/bugbounty/targets/TEST_TARGETS/ginandjuice/`.
 
 ## Git
 Manual and explicit — do not stage/commit/branch/push unless asked. Never commit

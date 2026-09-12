@@ -7,11 +7,12 @@ URLs, parameters, endpoints, secrets, and services — with **every stage's stat
 externalized to disk** so a human can inspect, intervene, or resume between any two
 steps.
 
-It is a self-contained, Dockerized product. It runs **one pass** of stages 1–11
-plus enrichment passes, scripted end to end — same input, same behavior. It makes
-**no LLM calls** and does **no exploitation**: it discovers, enriches, prioritizes,
-and flags candidates, and never tests, exploits, uses a credential, or confirms a
-vulnerability.
+It is a self-contained, Dockerized product. It runs stages 1–11 plus enrichment
+passes, scripted end to end — same input, same behavior — **looping the discovery
+stages until the asset graph stabilizes** (loop-until-stable), then running the
+finalizers once. It makes **no LLM calls** and does **no exploitation**: it
+discovers, enriches, prioritizes, and flags candidates, and never tests, exploits,
+uses a credential, or confirms a vulnerability.
 
 > **Authorized use only.** Every active-traffic stage runs behind a deterministic
 > scope gate and per-host rate limits. You must supply a `scope.json` with an
@@ -60,8 +61,8 @@ All state lands in the run directory you point it at:
 |---|---|
 | `assets.db` | SQLite: the asset graph (`subdomains`/`urls`/`ips`) + `takeover_findings` + first-class source records (`parameters`, `endpoints`, `secrets`, `services`) |
 | `needs_review.json` | Assets the scope gate could not classify — pending human resolution |
-| `run_state.json` | Current stage/pass/status |
-| `raw/stageN_toolname.json` | Verbatim tool output (per-target suffix on multi-target loops) |
+| `run_state.json` | Current stage/pass/status + `passes_completed` + `pass_deltas` (loop trail) |
+| `raw/stageN_toolname.json` | Verbatim tool output (per-target suffix on multi-target loops; `__pN` suffix on loop passes ≥ 2) |
 | `scope.json` | Your input allowlist (read-only from recon's POV) |
 
 Inspect it at any point: `sqlite3 run/assets.db`. The full on-disk schema is
@@ -184,16 +185,22 @@ build → mocked tests → **real run against a consented target** → fix → c
 run. Tool interfaces are never trusted from `--help`; they're confirmed against
 real output. See `docs/CONTRIBUTING.md` for the working agreements.
 
-Standing consented test target for recon verification: `zonetransfer.me` (a
-deliberately open, consented DNS-testing domain).
+Standing consented test targets for recon verification: `zonetransfer.me` (a
+deliberately open, consented DNS-testing domain — the quick convergence/clean-exit
+smoke test) and `ginandjuice.shop` (PortSwigger's deliberately-scannable demo shop
+— the rich-surface target for the URL/param/JS/loop machinery).
 
 ## Known gaps
 
-- Runs **one pass** — loop-until-stable is not built here. Note this materially
-  under-covers stages whose ideal input is produced downstream: e.g. x8 hidden-param
-  discovery (stage 5) never fuzzes the endpoints ffuf/API/archived-JS find later, so
-  a second pass would recover them (observed ~3.5× more x8 candidates on a run where
-  those endpoints were already present).
+- **Loop-until-stable is built** (the discovery stages loop until the asset graph
+  stabilizes, so x8 hidden-param discovery re-fuzzes endpoints that ffuf/crawl/JS
+  surface downstream — the observed ~3.5× x8 gain; validated live at 3.3×). Two
+  named residuals: (1) **efficiency** — each loop pass re-seeds from the full graph,
+  so passes ≥ 2 re-run the expensive per-host active stages (4/6/6.5) on the stable
+  host set (redundant traffic, bounded by the pass cap); incremental "frontier"
+  seeding is a deferred optimization. (2) **per-pass timings** — `run_state.json`'s
+  `timings` dict keeps only the last pass's value per stage (fixed keys); cosmetic,
+  telemetry only.
 - Content discovery's WAF handling covers a 403 flood (ffuf `-sf`), a near-total
   **403-wall** the `-sf` window misses (a block-ratio backstop), and a
   **200-with-JS-challenge** wall (a pre-flight retreat when the host's stage-4

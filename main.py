@@ -325,10 +325,15 @@ def get_live_urls_for_x8(state: RunState) -> list[str]:
     ]
 
 
-def run_stage5_and_report(root_domains: list[str], patterns: ScopePatterns, state: RunState, scope: dict) -> None:
+def run_stage5_and_report(root_domains: list[str], patterns: ScopePatterns, state: RunState,
+                          scope: dict, current_pass: int = 1) -> int:
     """
     Full stage 5 sequence: paramspider (new url assets) + x8 (parameter
     records). x8 findings are Track-D `parameter` records now, not metadata.
+
+    Returns the count of genuinely-new ASSETS added (paramspider's url assets;
+    x8 emits records, which do not count toward the loop stability sum - see
+    RECON_LOOP_DESIGN.md § 4a).
     """
     live_urls = get_live_urls_for_x8(state)
     logger.info("Seeding stage 5 with %d root domain(s) for paramspider, %d live url(s) for x8",
@@ -336,7 +341,7 @@ def run_stage5_and_report(root_domains: list[str], patterns: ScopePatterns, stat
 
     logger.info("--- Stage 5: hidden parameter discovery (paramspider + x8) ---")
     stage5_new_assets, stage5_metadata_updates, stage5_records = run_stage5(
-        root_domains, live_urls, state, current_pass=1, scope=scope
+        root_domains, live_urls, state, current_pass=current_pass, scope=scope
     )
 
     # metadata_updates is empty now (x8 → parameter records), but keep the
@@ -349,12 +354,15 @@ def run_stage5_and_report(root_domains: list[str], patterns: ScopePatterns, stat
             continue
         state.update_asset_metadata(matching_asset.asset_id, metadata_update)
 
-    run_stage_and_report(5, "hidden parameter discovery", stage5_new_assets, patterns, state)
+    newly_added = run_stage_and_report(5, "hidden parameter discovery", stage5_new_assets, patterns, state)
     persist_records(state, stage5_records)
+    return len(newly_added)
 
 
-def run_stage6_and_report(patterns: ScopePatterns, state: RunState, scope: dict) -> None:
-    """Full stage 6 sequence: katana crawl → new url assets."""
+def run_stage6_and_report(patterns: ScopePatterns, state: RunState, scope: dict,
+                          current_pass: int = 1) -> int:
+    """Full stage 6 sequence: katana crawl → new url assets. Returns the count
+    of genuinely-new assets added (loop stability contribution)."""
     all_assets = state.load_assets()
     known_in_scope_hosts = [
         a.value for a in all_assets
@@ -363,8 +371,9 @@ def run_stage6_and_report(patterns: ScopePatterns, state: RunState, scope: dict)
     logger.info("Seeding stage 6 with %d known in-scope host(s)", len(known_in_scope_hosts))
 
     logger.info("--- Stage 6: crawling (katana, JS-aware) ---")
-    stage6_new_assets = run_stage6(known_in_scope_hosts, state, current_pass=1, scope=scope)
-    run_stage_and_report(6, "crawling", stage6_new_assets, patterns, state)
+    stage6_new_assets = run_stage6(known_in_scope_hosts, state, current_pass=current_pass, scope=scope)
+    newly_added = run_stage_and_report(6, "crawling", stage6_new_assets, patterns, state)
+    return len(newly_added)
 
 
 def _live_hosts_with_origins(state: RunState) -> tuple[list[str], dict[str, str]]:
@@ -424,24 +433,28 @@ def _apply_waf_flags(state: RunState, waf_flags: dict[str, dict]) -> None:
     logger.info("Applied stage 6.5 WAF flags to %d host(s)", applied)
 
 
-def run_content_discovery_and_report(patterns: ScopePatterns, state: RunState, scope: dict) -> None:
+def run_content_discovery_and_report(patterns: ScopePatterns, state: RunState, scope: dict,
+                                     current_pass: int = 1) -> int:
     """
     Full stage 6.5 (B1) sequence: ffuf content discovery over confirmed-live
     in-scope hosts → new url assets + Track-D endpoint records + per-host WAF
     flags. Seeded exactly like stage 9 (in-scope subdomains that stage 4 confirmed
     live via httpx_status_code); brute-forcing a host not serving HTTP is wasted
     traffic. Runs BEFORE stage 7 so discovered .js is jsluice-mined same-pass.
+
+    Returns the count of genuinely-new assets added (loop stability contribution).
     """
     live_hosts, host_base = _live_hosts_with_origins(state)
     logger.info("Seeding stage 6.5 with %d confirmed-live in-scope host(s)", len(live_hosts))
 
     logger.info("--- Stage 6.5: content / endpoint discovery (ffuf) ---")
     new_assets, records, waf_flags = run_content_discovery(
-        live_hosts, state, current_pass=1, scope=scope, host_base=host_base)
+        live_hosts, state, current_pass=current_pass, scope=scope, host_base=host_base)
 
-    run_stage_and_report(6.5, "content discovery", new_assets, patterns, state)
+    newly_added = run_stage_and_report(6.5, "content discovery", new_assets, patterns, state)
     persist_records(state, records)                    # links endpoint.url → the just-added url asset
     _apply_waf_flags(state, waf_flags)
+    return len(newly_added)
 
 
 def run_screenshots_and_report(patterns: ScopePatterns, state: RunState, scope: dict) -> None:
@@ -527,10 +540,12 @@ def run_archived_js_and_report(patterns: ScopePatterns, state: RunState, scope: 
     persist_records(state, records)                    # links endpoint/param/secret → parent url asset
 
 
-def run_stage7_and_report(patterns: ScopePatterns, state: RunState, scope: dict) -> None:
+def run_stage7_and_report(patterns: ScopePatterns, state: RunState, scope: dict,
+                          current_pass: int = 1) -> int:
     """
     Full stage 7 sequence: bundler probe + jsluice → new url assets, plus
-    Track-D endpoint/parameter/secret records.
+    Track-D endpoint/parameter/secret records. Returns the count of
+    genuinely-new assets added (loop stability contribution).
     """
     all_assets = state.load_assets()
     known_in_scope_hosts = [
@@ -546,7 +561,7 @@ def run_stage7_and_report(patterns: ScopePatterns, state: RunState, scope: dict)
 
     logger.info("--- Stage 7: JS discovery + extraction (jsluice) ---")
     stage7_new_assets, stage7_metadata_updates, stage7_records = run_stage7(
-        known_in_scope_hosts, known_js_urls, state, current_pass=1, scope=scope
+        known_in_scope_hosts, known_js_urls, state, current_pass=current_pass, scope=scope
     )
 
     # metadata_updates is empty now (jsluice secrets → secret records), but
@@ -559,8 +574,9 @@ def run_stage7_and_report(patterns: ScopePatterns, state: RunState, scope: dict)
             continue
         state.update_asset_metadata(matching_asset.asset_id, metadata_update)
 
-    run_stage_and_report(7, "JS discovery + extraction", stage7_new_assets, patterns, state)
+    newly_added = run_stage_and_report(7, "JS discovery + extraction", stage7_new_assets, patterns, state)
     persist_records(state, stage7_records)
+    return len(newly_added)
 
 
 def run_stage8_and_report(state: RunState, scope: dict) -> None:
@@ -631,40 +647,93 @@ def run_stage9_and_report(state: RunState, scope: dict) -> None:
     state.update_run_state(current_stage=9, status="stage_complete")
 
 
-def run_pipeline(root_domains: list[str], patterns: ScopePatterns, state: RunState, scope: dict) -> None:
-    """
-    The stage-by-stage pipeline body, factored out of main() so main() can
-    wrap it in the R7 error-status guard.
-    """
-    state.update_run_state(current_stage=1, current_pass=1, status="running")
-    # A run re-run into an existing dir must not inherit a prior attempt's error
-    # (update_run_state is merge-only). Start clean.
-    state.clear_run_error()
+# ---------------------------------------------------------------------------
+# Loop-until-stable (Caveat 3 / R14). See RECON_LOOP_DESIGN.md. The pipeline is
+# three phases: PRE-LOOP {1} once → LOOP {3,4,F5,5,6,6.5,7} repeated until the
+# R14 convergence guard fires → FINALIZE {4.5,E4,8,9,C2,C5,10,11,C4,F1,A2,F6}
+# once over the complete graph (plus a conditional final x8 harvest, D5).
+# ---------------------------------------------------------------------------
 
-    logger.info("--- Stage 1: passive discovery ---")
-    stage1_found = run_stage1(root_domains, state, current_pass=1, scope=scope)
-    run_stage_and_report(1, "passive discovery", stage1_found, patterns, state)
+DEFAULT_MAX_PASSES = 4      # hard pass cap (R14) - the non-determinism backstop
+MAX_PASSES_CEILING = 8      # clamp for a scope.json override
+LOOP_ABS_FLOOR = 3          # diminishing-returns floor for tiny targets
+LOOP_RATIO = 0.02           # ...and the ratio floor for large ones (2%)
 
-    all_assets = state.load_assets()
+
+def resolve_max_passes(scope: dict) -> int:
+    """MAX_PASSES for this run: scope.json `run_options.max_passes` if present and
+    sane, else DEFAULT_MAX_PASSES. Fail-safe (fail toward the conservative default,
+    consistent with the fail-closed discipline): missing/malformed → default +
+    warning; clamped to [1, MAX_PASSES_CEILING]. run_options is tuning, not
+    authorization, so unlike rate_limit/verified_by_human it is optional."""
+    ro = scope.get("run_options") or {}
+    raw = ro.get("max_passes")
+    if raw is None:
+        return DEFAULT_MAX_PASSES
+    try:
+        n = int(raw)
+    except (TypeError, ValueError):
+        logger.warning("run_options.max_passes %r is not an int - using default %d",
+                       raw, DEFAULT_MAX_PASSES)
+        return DEFAULT_MAX_PASSES
+    if n < 1:
+        logger.warning("run_options.max_passes %d < 1 - using default %d", n, DEFAULT_MAX_PASSES)
+        return DEFAULT_MAX_PASSES
+    if n > MAX_PASSES_CEILING:
+        logger.warning("run_options.max_passes %d exceeds ceiling %d - clamping",
+                       n, MAX_PASSES_CEILING)
+        return MAX_PASSES_CEILING
+    return n
+
+
+def loop_should_terminate(delta: int, current_pass: int, max_passes: int,
+                          total_before: int) -> tuple[bool, str]:
+    """The R14 convergence guard. Returns (stop, reason). Precedence:
+      1. delta == 0            → ("converged")  — a true fixed point → "stable"
+      2. current_pass >= cap   → ("cap")        — hard pass cap backstop
+      3. delta < floor         → ("diminishing")— floor = max(ABS_FLOOR, RATIO×total_before)
+    Otherwise (False, ""). delta counts genuinely-new ASSETS only (records don't
+    seed → excluded); it is already R6-canonicalized + deduped by add_assets."""
+    if delta == 0:
+        return True, "converged"
+    if current_pass >= max_passes:
+        return True, "cap"
+    floor = max(LOOP_ABS_FLOOR, int(LOOP_RATIO * total_before))
+    if delta < floor:
+        return True, "diminishing"
+    return False, ""
+
+
+def run_stage3_and_report(root_domains: list[str], patterns: ScopePatterns,
+                          state: RunState, scope: dict, current_pass: int = 1) -> int:
+    """Full stage 3 sequence: active DNS resolution + brute force → new subdomain
+    assets. Re-seeds from the full graph each pass (new subdomains re-feed the
+    permutation brute). Returns the count of genuinely-new assets added."""
     known_in_scope_subdomains = [
-        a.value for a in all_assets
+        a.value for a in state.load_assets()
         if a.type == "subdomain" and a.scope_status == "in_scope"
     ]
     logger.info("Seeding stage 3 with %d known in-scope subdomains", len(known_in_scope_subdomains))
-
     logger.info("--- Stage 3: active DNS resolution + brute force ---")
-    stage3_found = run_stage3(root_domains, known_in_scope_subdomains, state, current_pass=1, scope=scope)
-    run_stage_and_report(3, "active DNS + brute force", stage3_found, patterns, state)
+    stage3_found = run_stage3(root_domains, known_in_scope_subdomains, state,
+                              current_pass=current_pass, scope=scope)
+    newly_added = run_stage_and_report(3, "active DNS + brute force", stage3_found, patterns, state)
+    return len(newly_added)
 
-    all_assets = state.load_assets()
+
+def run_stage4_and_report(patterns: ScopePatterns, state: RunState, scope: dict,
+                          current_pass: int = 1) -> int:
+    """Full stage 4 sequence: live host probing (httpx + naabu) → new url/ip
+    assets + host metadata + naabu service promotion (D4). Returns the count of
+    genuinely-new assets added (loop stability contribution)."""
     known_in_scope_hosts = [
-        a for a in all_assets
+        a for a in state.load_assets()
         if a.type == "subdomain" and a.scope_status == "in_scope"
     ]
     logger.info("Seeding stage 4 with %d known in-scope hosts", len(known_in_scope_hosts))
-
     logger.info("--- Stage 4: live host probing (httpx + naabu) ---")
-    stage4_new_assets, stage4_metadata_updates = run_stage4(known_in_scope_hosts, state, current_pass=1, scope=scope)
+    stage4_new_assets, stage4_metadata_updates = run_stage4(
+        known_in_scope_hosts, state, current_pass=current_pass, scope=scope)
 
     for host_value, metadata_update in stage4_metadata_updates.items():
         matching = [a for a in known_in_scope_hosts if a.value == host_value]
@@ -677,7 +746,7 @@ def run_pipeline(root_domains: list[str], patterns: ScopePatterns, state: RunSta
         state.update_asset_metadata(matching[0].asset_id, metadata_update)
     logger.info("Applied stage 4 metadata updates to %d existing host(s)", len(stage4_metadata_updates))
 
-    run_stage_and_report(4, "live host probing", stage4_new_assets, patterns, state)
+    newly_added = run_stage_and_report(4, "live host probing", stage4_new_assets, patterns, state)
 
     # (Track D / D4) promote naabu's open ports to first-class `service`
     # records - from host metadata_updates and from IP-only naabu assets -
@@ -690,7 +759,7 @@ def run_pipeline(root_domains: list[str], patterns: ScopePatterns, state: RunSta
             stage4_services.append(Service(
                 target=host_value, host=host_value, port=port, proto="tcp",
                 discovered_by="naabu", target_derived=False,
-                discovered_at_stage=4, discovered_in_pass=1,
+                discovered_at_stage=4, discovered_in_pass=current_pass,
             ))
     for a in stage4_new_assets:
         if a.type == "ip":
@@ -698,27 +767,85 @@ def run_pipeline(root_domains: list[str], patterns: ScopePatterns, state: RunSta
                 stage4_services.append(Service(
                     target=a.value, ip=a.value, port=port, proto="tcp",
                     discovered_by="naabu", target_derived=False,
-                    discovered_at_stage=4, discovered_in_pass=1,
+                    discovered_at_stage=4, discovered_in_pass=current_pass,
                 ))
     persist_records(state, {"services": stage4_services})
+    return len(newly_added)
 
-    # (F5) reverse DNS on discovered IPs → new subdomain candidates (scope-gated).
+
+def run_reverse_dns_and_report(patterns: ScopePatterns, state: RunState, scope: dict,
+                               current_pass: int = 1) -> int:
+    """(F5) reverse DNS (dnsx -ptr) on discovered IPs → new subdomain candidates
+    (scope-gated). Re-seeds from all in-scope/needs-review IPs each pass (new IPs
+    from stage 4 → new PTR names). Returns the count of genuinely-new assets."""
     all_ip_values = [a.value for a in state.load_assets()
                      if a.type == "ip" and a.scope_status in ("in_scope", "needs_review")]
-    if all_ip_values:
-        logger.info("--- F5: reverse DNS (dnsx -ptr) on %d discovered IP(s) ---", len(all_ip_values))
-        ptr_assets = run_reverse_dns(all_ip_values, state, scope, current_pass=1)
-        run_stage_and_report(4, "reverse DNS (F5)", ptr_assets, patterns, state)
+    if not all_ip_values:
+        return 0
+    logger.info("--- F5: reverse DNS (dnsx -ptr) on %d discovered IP(s) ---", len(all_ip_values))
+    ptr_assets = run_reverse_dns(all_ip_values, state, scope, current_pass=current_pass)
+    newly_added = run_stage_and_report(4, "reverse DNS (F5)", ptr_assets, patterns, state)
+    return len(newly_added)
 
+
+def _run_preloop(root_domains: list[str], patterns: ScopePatterns,
+                 state: RunState, scope: dict) -> None:
+    """Pass-1-only pre-loop: stage 1 (passive discovery). Stage 1 seeds solely
+    from root_domains (constant across passes), so re-running it yields only
+    non-deterministic CT/OSINT flap - pure noise in the convergence signal.
+    Running it once removes R14's biggest non-determinism source (D1)."""
+    state.current_pass = 1
+    logger.info("--- Stage 1: passive discovery (pre-loop, pass 1 only) ---")
+    stage1_found = run_stage1(root_domains, state, current_pass=1, scope=scope)
+    run_stage_and_report(1, "passive discovery", stage1_found, patterns, state)
+
+
+def _run_loop_pass(root_domains: list[str], patterns: ScopePatterns, state: RunState,
+                   scope: dict, current_pass: int) -> int:
+    """One loop pass: 3 → 4 (+ service promotion) → F5 → 5 → 6 → 6.5 → 7. Each
+    stage re-seeds from the full asset graph (the "caller filters, stage consumes"
+    invariant), so every pass automatically picks up the prior pass's discoveries
+    - most importantly x8 (stage 5) fuzzing URLs that 6/6.5/7 surfaced last pass.
+
+    Returns the pass's stability delta: the sum of genuinely-new ASSETS across
+    these stages (Track-D records excluded - they don't create new seeds, so they
+    can't make another pass productive; see RECON_LOOP_DESIGN.md § 4a)."""
+    delta = 0
+    delta += run_stage3_and_report(root_domains, patterns, state, scope, current_pass)
+    delta += run_stage4_and_report(patterns, state, scope, current_pass)
+    delta += run_reverse_dns_and_report(patterns, state, scope, current_pass)
+    delta += run_stage5_and_report(root_domains, patterns, state, scope, current_pass)
+    delta += run_stage6_and_report(patterns, state, scope, current_pass)
+    delta += run_content_discovery_and_report(patterns, state, scope, current_pass)   # 6.5 (B1)
+    delta += run_stage7_and_report(patterns, state, scope, current_pass)
+    return delta
+
+
+def _run_finalize(root_domains: list[str], patterns: ScopePatterns, state: RunState,
+                  scope: dict, converged: bool, final_pass: int) -> None:
+    """Run-once finalize phase over the complete converged graph:
+    4.5 → E4 → 8 → 9 → C2 → C5 → 10 → 11 → C4 → F1 → A2 → F6. These are
+    metadata-only, findings-only, terminal record producers, or offline
+    finalizers - none seeds a downstream recon consumer, so each runs exactly
+    once and covers every host/URL the loop ever found.
+
+    (D5) If the loop exited UN-converged (cap or diminishing-returns with
+    delta > 0), the final pass's newly-discovered URLs were never x8-fuzzed
+    (x8 runs at the START of a pass). So begin with one record-only x8 harvest
+    over the full in-scope live URL set. A clean (delta == 0) exit needs no
+    harvest - the last pass added no URLs, so x8 already saw everything."""
+    if not converged:
+        harvest_pass = final_pass + 1
+        state.current_pass = harvest_pass
+        logger.info("--- D5: final x8 harvest (loop exited un-converged) - x8 over the "
+                    "full URL set, pass %d (records only, no paramspider) ---", harvest_pass)
+        # root_domains=[] → paramspider no-ops; only x8 runs, over get_live_urls_for_x8().
+        run_stage5_and_report([], patterns, state, scope, harvest_pass)
+
+    # Finalize stages run once and have their own (distinct) stage numbers, so
+    # their raw archives never collide across passes; leave the ambient cursor at
+    # the last value.
     run_waf_cdn_and_report(patterns, state, scope)   # stage 4.5 (C3) WAF/CDN detection
-
-    run_stage5_and_report(root_domains, patterns, state, scope)
-
-    run_stage6_and_report(patterns, state, scope)
-
-    run_content_discovery_and_report(patterns, state, scope)   # stage 6.5 (B1)
-
-    run_stage7_and_report(patterns, state, scope)
 
     # (E4) OFFLINE secret classification — label stage-7 secrets by kind/provider
     # from their R8 raw archives; ZERO network (never validates — primitive's job).
@@ -758,8 +885,55 @@ def run_pipeline(root_domains: list[str], patterns: ScopePatterns, state: RunSta
     logger.info("--- F6: target profile digest (deterministic, no traffic) ---")
     run_target_profile(state)
 
-    state.update_run_state(status="stage_complete", passes_completed=1)
-    logger.info("Stages 1, 3, 4, 5, 6, 6.5, 7, 8, 9, 10, and 11 complete. See %s and %s", state.assets_db_path, state.review_path)
+
+def run_pipeline(root_domains: list[str], patterns: ScopePatterns, state: RunState, scope: dict) -> None:
+    """
+    The stage-by-stage pipeline body, factored out of main() so main() can
+    wrap it in the R7 error-status guard. Loop-until-stable (R14): PRE-LOOP
+    {stage 1} → LOOP {3,4,F5,5,6,6.5,7} until the convergence guard fires →
+    FINALIZE {4.5..F6} once. See RECON_LOOP_DESIGN.md.
+    """
+    state.update_run_state(current_stage=1, current_pass=1, status="running")
+    # A run re-run into an existing dir must not inherit a prior attempt's error
+    # (update_run_state is merge-only). Start clean.
+    state.clear_run_error()
+
+    max_passes = resolve_max_passes(scope)
+    logger.info("Loop-until-stable: max %d pass(es); diminishing-returns floor = "
+                "max(%d, %.0f%% of graph)", max_passes, LOOP_ABS_FLOOR, LOOP_RATIO * 100)
+
+    _run_preloop(root_domains, patterns, state, scope)
+
+    current_pass = 1
+    converged = False
+    while True:
+        total_before = len(state.load_assets())
+        state.current_pass = current_pass
+        state.update_run_state(current_pass=current_pass, status="running")
+        logger.info("=== Loop pass %d of at most %d (graph: %d assets) ===",
+                    current_pass, max_passes, total_before)
+
+        delta = _run_loop_pass(root_domains, patterns, state, scope, current_pass)
+        state.record_pass_delta(current_pass, delta)
+
+        stop, reason = loop_should_terminate(delta, current_pass, max_passes, total_before)
+        logger.info("=== Loop pass %d done: delta=%d new asset(s) -> %s ===",
+                    current_pass, delta, reason if stop else "another pass")
+        if stop:
+            converged = (reason == "converged")
+            break
+        current_pass += 1
+
+    passes_completed = current_pass
+    logger.info("Loop finished after %d pass(es) (%s). Running finalize phase.",
+                passes_completed, "converged/stable" if converged else "un-converged")
+
+    _run_finalize(root_domains, patterns, state, scope, converged, passes_completed)
+
+    final_status = "stable" if converged else "stage_complete"
+    state.update_run_state(status=final_status, passes_completed=passes_completed)
+    logger.info("Pipeline complete after %d loop pass(es), status=%s. See %s and %s",
+                passes_completed, final_status, state.assets_db_path, state.review_path)
 
 
 def _new_run_name() -> str:

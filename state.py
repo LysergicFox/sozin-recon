@@ -512,6 +512,14 @@ class RunState:
         self.raw_dir = self.run_dir / "raw"
         self.raw_dir.mkdir(parents=True, exist_ok=True)
 
+        # (loop-until-stable) Ambient pass cursor. The orchestrator sets this at
+        # the top of each loop pass (state.current_pass = N); save_raw/raw_path
+        # default to it, so EVERY stage's raw archive lands under the right
+        # per-pass filename with zero threading through stage internals. Stays 1
+        # for single-pass runs and the standalone stage re-runners. See
+        # RECON_LOOP_DESIGN.md (D6).
+        self.current_pass = 1
+
         # R8: the run dir is sensitive-at-rest TODAY (stage 7 extracts real
         # secrets). Owner-only at init, whether freshly created or re-opened.
         self.run_dir.chmod(0o700)
@@ -974,18 +982,51 @@ class RunState:
         with open(self.run_state_path, "w") as f:
             json.dump(state, f, indent=2)
 
+    def record_pass_delta(self, current_pass: int, delta: int) -> None:
+        """(loop-until-stable) Append this pass's stability delta - the count of
+        genuinely-new ASSETS added across the loop-body stages - to run_state's
+        `pass_deltas` trail, so the exit reason (converged vs cap vs
+        diminishing-returns) is auditable after the fact. Read-merge-write of the
+        one key (mirrors record_timing), NOT update_run_state(**kwargs), which
+        would clobber the list. See RECON_LOOP_DESIGN.md."""
+        state = self.load_run_state()
+        pass_deltas = state.get("pass_deltas", [])
+        pass_deltas.append({"pass": current_pass, "delta": delta})
+        state["pass_deltas"] = pass_deltas
+        state["last_updated"] = now_iso()
+        with open(self.run_state_path, "w") as f:
+            json.dump(state, f, indent=2)
+
     # -- raw archive -----------------------------------------------------
-    def raw_path(self, stage, tool: str) -> Path:
+    @staticmethod
+    def _raw_filename(stage, tool: str, current_pass: int = 1) -> str:
+        """The raw-archive filename for a stage/tool/pass (D6, loop-until-stable).
+        Pass 1 (the default) keeps the historical `stage{stage}_{tool}.json` name
+        BYTE-FOR-BYTE - backward-compatible with the raw_log_ref strings already
+        stored in the secrets table, the single-stage runners, the mocked tests,
+        and the dashboard. Pass >= 2 appends `__p{N}` so a later loop pass never
+        overwrites an earlier pass's raw output (Option A - see
+        RECON_LOOP_DESIGN.md)."""
+        suffix = "" if current_pass <= 1 else f"__p{current_pass}"
+        return f"stage{stage}_{tool}{suffix}.json"
+
+    def raw_path(self, stage, tool: str, current_pass: int | None = None) -> Path:
         """Return the raw-archive path for a stage/tool WITHOUT writing it, for
         tools that write their own output file (e.g. ffuf's `-o`). Same naming
         as save_raw so the two are interchangeable. `stage` may be a float for
         fractional stages (e.g. 6.5 content discovery) - the filename becomes
-        raw/stage6.5_ffuf_<host>.json, which is a valid, sortable name."""
-        return self.raw_dir / f"stage{stage}_{tool}.json"
+        raw/stage6.5_ffuf_<host>.json, which is a valid, sortable name. See
+        _raw_filename for the per-pass suffix rule. `current_pass=None` (the
+        normal case) uses the ambient pass cursor (self.current_pass)."""
+        p = self.current_pass if current_pass is None else current_pass
+        return self.raw_dir / self._raw_filename(stage, tool, p)
 
-    def save_raw(self, stage, tool: str, data) -> Path:
-        """Archive a tool's raw output, e.g. raw/stage1_subfinder.json"""
-        path = self.raw_dir / f"stage{stage}_{tool}.json"
+    def save_raw(self, stage, tool: str, data, current_pass: int | None = None) -> Path:
+        """Archive a tool's raw output, e.g. raw/stage1_subfinder.json (pass 1)
+        or raw/stage5_x8_<tag>__p2.json (pass 2). `current_pass=None` (the normal
+        case) uses the ambient pass cursor (self.current_pass). See _raw_filename."""
+        p = self.current_pass if current_pass is None else current_pass
+        path = self.raw_dir / self._raw_filename(stage, tool, p)
         with open(path, "w") as f:
             if isinstance(data, (dict, list)):
                 json.dump(data, f, indent=2)
