@@ -194,13 +194,13 @@ smoke test) and `ginandjuice.shop` (PortSwigger's deliberately-scannable demo sh
 
 - **Loop-until-stable is built** (the discovery stages loop until the asset graph
   stabilizes, so x8 hidden-param discovery re-fuzzes endpoints that ffuf/crawl/JS
-  surface downstream — the observed ~3.5× x8 gain; validated live at 3.3×). Two
-  named residuals: (1) **efficiency** — each loop pass re-seeds from the full graph,
-  so passes ≥ 2 re-run the expensive per-host active stages (4/6/6.5) on the stable
-  host set (redundant traffic, bounded by the pass cap); incremental "frontier"
-  seeding is a deferred optimization. (2) **per-pass timings** — `run_state.json`'s
-  `timings` dict keeps only the last pass's value per stage (fixed keys); cosmetic,
-  telemetry only.
+  surface downstream — the observed ~3.5× x8 gain; validated live at 3.3–3.65×).
+  **Incremental frontier seeding** (L3) means each target-facing stage on pass ≥ 2
+  processes only its *unprocessed* units (per-unit "processed" markers), so the
+  expensive per-host stages (4/6/6.5) run once, not once per pass — validated live
+  at ~half the wall-clock and target traffic, identical discovery. Residual:
+  **per-pass timings** — `run_state.json`'s `timings` dict keeps only the last
+  pass's value per stage (fixed keys); cosmetic, telemetry only.
 - Content discovery's WAF handling covers a 403 flood (ffuf `-sf`), a near-total
   **403-wall** the `-sf` window misses (a block-ratio backstop), and a
   **200-with-JS-challenge** wall (a pre-flight retreat when the host's stage-4

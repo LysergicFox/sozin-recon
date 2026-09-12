@@ -307,6 +307,41 @@ def run_stage_and_report(stage_num: int, stage_name: str, found: list[Asset],
     return newly_added
 
 
+# ---------------------------------------------------------------------------
+# (L3) Incremental frontier seeding. Each target-facing loop-body stage's per-unit
+# output is a pure function of that unit + the live target (independent of the rest
+# of the graph), so processing a unit once — in the pass it first appears — is
+# equivalent to re-processing it every pass, minus the redundant traffic. The
+# caller filters the seed to the unprocessed frontier and marks units after. The
+# FILTER is gated on current_pass >= 2 so pass 1 (and the standalone re-runners,
+# which call the wrappers at current_pass=1) process everything unchanged.
+# See RECON_LOOP_DESIGN.md § 10.
+# ---------------------------------------------------------------------------
+
+def frontier_values(state: RunState, seed_values: list[str], marker_key: str,
+                    current_pass: int) -> list[str]:
+    """Return the subset of seed_values to actually process this pass: on
+    current_pass >= 2, drop values whose asset already carries marker_key (was
+    processed in an earlier pass); on pass 1, return all (order-preserving)."""
+    if current_pass < 2:
+        return list(seed_values)
+    marked = {a.value for a in state.load_assets() if marker_key in a.metadata}
+    return [v for v in seed_values if v not in marked]
+
+
+def mark_processed(state: RunState, values: list[str], marker_key: str,
+                   current_pass: int) -> None:
+    """Stamp marker_key=current_pass on each asset whose value is in `values`
+    (mark-on-attempt). No-op for values with no matching asset."""
+    if not values:
+        return
+    by_value = {a.value: a for a in state.load_assets()}
+    for v in values:
+        a = by_value.get(v)
+        if a is not None:
+            state.update_asset_metadata(a.asset_id, {marker_key: current_pass})
+
+
 def get_live_urls_for_x8(state: RunState) -> list[str]:
     """
     In-scope url assets whose HOST matches a hostname stage 4 confirmed live
@@ -336,12 +371,15 @@ def run_stage5_and_report(root_domains: list[str], patterns: ScopePatterns, stat
     RECON_LOOP_DESIGN.md § 4a).
     """
     live_urls = get_live_urls_for_x8(state)
-    logger.info("Seeding stage 5 with %d root domain(s) for paramspider, %d live url(s) for x8",
-                len(root_domains), len(live_urls))
+    # (L3) x8 fuzzes only URLs not yet fuzzed in an earlier pass. paramspider seeds
+    # from root_domains (constant) and is left to run + dedup.
+    x8_frontier = frontier_values(state, live_urls, "x8_fuzzed_in_pass", current_pass)
+    logger.info("Seeding stage 5 with %d root domain(s) for paramspider; x8 frontier: %d of %d live url(s)",
+                len(root_domains), len(x8_frontier), len(live_urls))
 
     logger.info("--- Stage 5: hidden parameter discovery (paramspider + x8) ---")
     stage5_new_assets, stage5_metadata_updates, stage5_records = run_stage5(
-        root_domains, live_urls, state, current_pass=current_pass, scope=scope
+        root_domains, x8_frontier, state, current_pass=current_pass, scope=scope
     )
 
     # metadata_updates is empty now (x8 → parameter records), but keep the
@@ -356,6 +394,7 @@ def run_stage5_and_report(root_domains: list[str], patterns: ScopePatterns, stat
 
     newly_added = run_stage_and_report(5, "hidden parameter discovery", stage5_new_assets, patterns, state)
     persist_records(state, stage5_records)
+    mark_processed(state, x8_frontier, "x8_fuzzed_in_pass", current_pass)   # (L3)
     return len(newly_added)
 
 
@@ -363,16 +402,19 @@ def run_stage6_and_report(patterns: ScopePatterns, state: RunState, scope: dict,
                           current_pass: int = 1) -> int:
     """Full stage 6 sequence: katana crawl → new url assets. Returns the count
     of genuinely-new assets added (loop stability contribution)."""
-    all_assets = state.load_assets()
     known_in_scope_hosts = [
-        a.value for a in all_assets
+        a.value for a in state.load_assets()
         if a.type == "subdomain" and a.scope_status == "in_scope"
     ]
-    logger.info("Seeding stage 6 with %d known in-scope host(s)", len(known_in_scope_hosts))
+    # (L3) crawl only hosts not yet crawled in an earlier pass.
+    frontier = frontier_values(state, known_in_scope_hosts, "katana_crawled_in_pass", current_pass)
+    logger.info("Seeding stage 6: crawl frontier %d of %d known in-scope host(s)",
+                len(frontier), len(known_in_scope_hosts))
 
     logger.info("--- Stage 6: crawling (katana, JS-aware) ---")
-    stage6_new_assets = run_stage6(known_in_scope_hosts, state, current_pass=current_pass, scope=scope)
+    stage6_new_assets = run_stage6(frontier, state, current_pass=current_pass, scope=scope)
     newly_added = run_stage_and_report(6, "crawling", stage6_new_assets, patterns, state)
+    mark_processed(state, frontier, "katana_crawled_in_pass", current_pass)   # (L3)
     return len(newly_added)
 
 
@@ -445,15 +487,19 @@ def run_content_discovery_and_report(patterns: ScopePatterns, state: RunState, s
     Returns the count of genuinely-new assets added (loop stability contribution).
     """
     live_hosts, host_base = _live_hosts_with_origins(state)
-    logger.info("Seeding stage 6.5 with %d confirmed-live in-scope host(s)", len(live_hosts))
+    # (L3) ffuf (the most expensive per-host stage) only over hosts not yet fuzzed.
+    frontier = frontier_values(state, live_hosts, "content_discovered_in_pass", current_pass)
+    logger.info("Seeding stage 6.5: ffuf frontier %d of %d confirmed-live in-scope host(s)",
+                len(frontier), len(live_hosts))
 
     logger.info("--- Stage 6.5: content / endpoint discovery (ffuf) ---")
     new_assets, records, waf_flags = run_content_discovery(
-        live_hosts, state, current_pass=current_pass, scope=scope, host_base=host_base)
+        frontier, state, current_pass=current_pass, scope=scope, host_base=host_base)
 
     newly_added = run_stage_and_report(6.5, "content discovery", new_assets, patterns, state)
     persist_records(state, records)                    # links endpoint.url → the just-added url asset
     _apply_waf_flags(state, waf_flags)
+    mark_processed(state, frontier, "content_discovered_in_pass", current_pass)   # (L3)
     return len(newly_added)
 
 
@@ -556,12 +602,15 @@ def run_stage7_and_report(patterns: ScopePatterns, state: RunState, scope: dict,
         a.value for a in all_assets
         if a.type == "url" and a.scope_status == "in_scope" and a.value.split("?")[0].endswith(".js")
     ]
-    logger.info("Seeding stage 7 with %d known in-scope host(s), %d known in-scope .js url(s)",
-                len(known_in_scope_hosts), len(known_js_urls))
+    # (L3) bundler-probe only un-probed hosts; jsluice-mine only un-mined .js.
+    host_frontier = frontier_values(state, known_in_scope_hosts, "bundler_probed_in_pass", current_pass)
+    js_frontier = frontier_values(state, known_js_urls, "jsluice_mined_in_pass", current_pass)
+    logger.info("Seeding stage 7: bundler-probe frontier %d of %d host(s); jsluice frontier %d of %d .js url(s)",
+                len(host_frontier), len(known_in_scope_hosts), len(js_frontier), len(known_js_urls))
 
     logger.info("--- Stage 7: JS discovery + extraction (jsluice) ---")
     stage7_new_assets, stage7_metadata_updates, stage7_records = run_stage7(
-        known_in_scope_hosts, known_js_urls, state, current_pass=current_pass, scope=scope
+        host_frontier, js_frontier, state, current_pass=current_pass, scope=scope
     )
 
     # metadata_updates is empty now (jsluice secrets → secret records), but
@@ -576,6 +625,8 @@ def run_stage7_and_report(patterns: ScopePatterns, state: RunState, scope: dict,
 
     newly_added = run_stage_and_report(7, "JS discovery + extraction", stage7_new_assets, patterns, state)
     persist_records(state, stage7_records)
+    mark_processed(state, host_frontier, "bundler_probed_in_pass", current_pass)   # (L3)
+    mark_processed(state, js_frontier, "jsluice_mined_in_pass", current_pass)      # (L3)
     return len(newly_added)
 
 
@@ -726,11 +777,17 @@ def run_stage4_and_report(patterns: ScopePatterns, state: RunState, scope: dict,
     """Full stage 4 sequence: live host probing (httpx + naabu) → new url/ip
     assets + host metadata + naabu service promotion (D4). Returns the count of
     genuinely-new assets added (loop stability contribution)."""
-    known_in_scope_hosts = [
+    all_in_scope_hosts = [
         a for a in state.load_assets()
         if a.type == "subdomain" and a.scope_status == "in_scope"
     ]
-    logger.info("Seeding stage 4 with %d known in-scope hosts", len(known_in_scope_hosts))
+    # (L3) probe only hosts not yet probed in an earlier pass (marker set on every
+    # host stage 4 attempts, live or dead).
+    frontier_vals = set(frontier_values(
+        state, [a.value for a in all_in_scope_hosts], "stage4_probed_in_pass", current_pass))
+    known_in_scope_hosts = [a for a in all_in_scope_hosts if a.value in frontier_vals]
+    logger.info("Seeding stage 4: probe frontier %d of %d known in-scope host(s)",
+                len(known_in_scope_hosts), len(all_in_scope_hosts))
     logger.info("--- Stage 4: live host probing (httpx + naabu) ---")
     stage4_new_assets, stage4_metadata_updates = run_stage4(
         known_in_scope_hosts, state, current_pass=current_pass, scope=scope)
@@ -770,6 +827,8 @@ def run_stage4_and_report(patterns: ScopePatterns, state: RunState, scope: dict,
                     discovered_at_stage=4, discovered_in_pass=current_pass,
                 ))
     persist_records(state, {"services": stage4_services})
+    mark_processed(state, [a.value for a in known_in_scope_hosts],
+                   "stage4_probed_in_pass", current_pass)   # (L3)
     return len(newly_added)
 
 

@@ -264,6 +264,15 @@ Host assets (`subdomain`) also gain agent-authored, **trusted** metadata keys fr
 these stages: `waf_suspected`/`waf_signal`/`waf_block_ratio` (B1 — NOT in
 `TARGET_DERIVED_METADATA_KEYS`).
 
+**(loop-until-stable, L3 — incremental frontier seeding)** Each target-facing
+loop-body stage stamps an agent-authored per-unit "processed in pass N" marker so
+a later pass processes only its unprocessed frontier (not the whole graph again):
+`stage4_probed_in_pass` / `katana_crawled_in_pass` / `content_discovered_in_pass`
+/ `bundler_probed_in_pass` on host assets, `x8_fuzzed_in_pass` /
+`jsluice_mined_in_pass` on url assets. Trusted (agent bookkeeping), NOT in
+`TARGET_DERIVED_METADATA_KEYS`. The filter engages only on pass ≥ 2, so pass 1 and
+the single-stage re-runners process everything. See `RECON_LOOP_DESIGN.md` § 10.
+
 ---
 
 ## Run directory hygiene — applies to RECON now (R8)

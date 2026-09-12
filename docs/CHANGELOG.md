@@ -5,6 +5,34 @@ Compact, newest-first. Status tags: **DONE** / **DESIGN** (locked, not built) /
 
 ---
 
+## 2026-09-12 — loop: incremental frontier seeding (Batch L3): DONE
+
+Efficiency follow-up to loop-until-stable. Each target-facing loop-body stage now
+processes only its **unprocessed frontier** on pass ≥ 2 instead of re-seeding from
+the full graph — so the expensive per-host stages run once, not once per pass.
+Design: `RECON_LOOP_DESIGN.md` § 10.
+
+- **Crux (correctness-preserving):** each stage's per-unit output is a pure
+  function of that unit + the live target (independent of the rest of the graph),
+  so processing a unit once (in the pass it first appears) yields the same result
+  as every-pass re-processing, minus the redundant traffic.
+- **`main.py`:** `frontier_values()` + `mark_processed()` helpers; the stage
+  4/5-x8/6/6.5/7 wrappers filter their seed to units without a per-unit marker and
+  stamp the marker after. Markers (agent-authored, trusted): `stage4_probed_in_pass`,
+  `x8_fuzzed_in_pass`, `katana_crawled_in_pass`, `content_discovered_in_pass`,
+  `bundler_probed_in_pass`, `jsluice_mined_in_pass`. Stages 3/F5 stay full-reseed
+  (resolver-facing, cheap).
+- **The FILTER is gated on `current_pass >= 2`** — pass 1 and the standalone
+  re-runners (which call the wrappers at `current_pass=1`) process everything
+  unchanged; no re-runner edits, pass-1 behavior byte-identical.
+- **Validated live (docker, ginandjuice):** identical discovery (252 assets, 75
+  endpoints, x8 params 95 vs 85 — the delta is non-deterministic pass-1 discovery,
+  not lost coverage) but **ffuf/katana ran once** (pass-2 frontiers `ffuf 0/1`,
+  `crawl 0/2`, `probe 0/2`) → **36 min vs the L1 run's 75 min (~half)**. Converged
+  in 2 passes, `stable`, no faults.
+- Tests: `test_loop.py` +3 (frontier gating, pass-2 skip + mark, re-runner
+  processes-all). **197 passed.**
+
 ## 2026-09-12 — loop-until-stable (Caveat 3 / R14): DONE
 
 The pipeline now loops the discovery stages until the asset graph stabilizes,
