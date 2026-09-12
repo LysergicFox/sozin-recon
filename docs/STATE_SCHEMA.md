@@ -100,8 +100,10 @@ array (unioned on merge). `add_assets()` merges metadata+discovered_by on duplic
 rows; **stale metadata keys never clear** (flagged).
 
 **Table: `takeover_findings`** — one row per nuclei takeover match, FK →
-`assets.asset_id`, no UNIQUE (history wanted across passes). ⚠️ parser UNVERIFIED
-against a real positive finding.
+`assets.asset_id`, no UNIQUE (history wanted across passes). Parser **verified**
+against real nuclei v3.11.1 JSONL (real http + dns positives; see
+`stage8_takeover.py`). Rows are unconfirmed candidates for manual review
+(in-the-wild detection is nuclei's job; recon flags, never confirms).
 
 ---
 

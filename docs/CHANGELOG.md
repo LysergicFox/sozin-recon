@@ -5,6 +5,37 @@ Compact, newest-first. Status tags: **DONE** / **DESIGN** (locked, not built) /
 
 ---
 
+## 2026-09-12 — nuclei takeover parser: VERIFIED against real output (Caveat 2)
+
+The stage-8 takeover JSONL parser shipped UNVERIFIED for months (a real positive
+needs a dangling cloud resource that wasn't cheap to stand up). Now verified —
+without a vulnerable domain — by forcing REAL templates to MATCH controlled input,
+which exercises the exact serialization path a real finding takes:
+
+- **http:** shipped `http/takeovers/tave-takeover.yaml` run against a local
+  `python -m http.server` serving that template's exact matcher body
+  (`<h1>Error 404: Page Not Found</h1>`) over a hostname (its `Host != ip` guard)
+  → a real `type:"http"` positive.
+- **dns:** a minimal takeover-tagged `dns:` template (permissive matcher) against
+  a resolving domain → a real `type:"dns"` positive. (Run nuclei with `-duc -ni`
+  or the first custom-template run hangs on the update check.)
+
+`parse_nuclei_jsonl()` parses BOTH correctly, no code change needed — the
+defensive assumptions matched reality. Confirmed: field names/casing
+(`template-id`/`info.{name,severity}`/`type`/`host`/`matched-at`) are exact; the
+`("dns","http")` type mapping is right; and `host` is a **bare hostname**, so
+asset_id linkage by exact match works (the old "host may carry scheme/port" fear
+is disproven — that lives in `matched-at`, which we don't link on).
+
+- **Honest boundary kept:** this verifies our handling of nuclei's output shape;
+  it does NOT prove nuclei detects a real in-the-wild takeover (that's nuclei's
+  templates' job). Findings stay unconfirmed candidates for manual review.
+- Docs de-flagged: `stage8_takeover.py` docstring, `main.py` caller warning,
+  `README.md`, `docs/CONTRIBUTING.md`, `docs/STATE_SCHEMA.md`.
+- Tests: `testing/test_nuclei_takeover.py` (+5) with the captured real JSONL kept
+  verbatim as fixtures under `testing/fixtures/nuclei/` (git-ignored, like the
+  test suite). **202 passed.**
+
 ## 2026-09-12 — loop: incremental frontier seeding (Batch L3): DONE
 
 Efficiency follow-up to loop-until-stable. Each target-facing loop-body stage now

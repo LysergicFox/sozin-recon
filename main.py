@@ -649,8 +649,8 @@ def run_stage8_and_report(state: RunState, scope: dict) -> None:
     if stage8_findings:
         state.add_takeover_findings(stage8_findings)
         logger.warning(
-            "Stage 8 found %d potential takeover finding(s) - UNVERIFIED "
-            "parser, manually confirm before treating as ground truth",
+            "Stage 8 found %d potential takeover finding(s) - recon flags "
+            "candidates only; manually confirm before treating as ground truth",
             len(stage8_findings),
         )
     else:

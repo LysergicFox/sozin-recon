@@ -64,8 +64,13 @@ example.com→Cloudflare — and wafw00f was found to send attack-signature prob
 run per-host/scoped), dnsx `-ptr -json` (F5), httpx `-screenshot -system-chrome` (C2),
 and the nuclei detection JSONL + nuclei-template CPE metadata (C1/C5). The nuclei
 **detection** JSONL parser (C1) — long flagged UNVERIFIED — is **now confirmed** against
-real positive output. (The separate **takeover**-finding parser in `stage8_takeover.py`
-stays UNVERIFIED until a real positive takeover finding — see README known-gaps.)
+real positive output. The separate **takeover**-finding parser in `stage8_takeover.py`
+is **also now VERIFIED (2026-09-12)** — real http + dns nuclei positives were generated
+without a vulnerable domain by forcing real templates to match controlled input (a local
+server serving a template's matcher body; a permissive `dns:` template against a resolving
+domain). In-the-wild detection remains nuclei's responsibility; a finding is still a
+manual-review candidate. This is a good pattern for "unverifiable" tool outputs: force a
+real match rather than hand-craft a sample.
 **The Wayback archive surface (B4 / stage 11) was VERIFIED this way 2026-08-24** — real
 CDX (`output=json` is a list-of-lists whose **first row is a header**; `collapse=digest`
 is **adjacency-only**, so identical non-adjacent captures survive and we dedup by digest
