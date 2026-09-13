@@ -1,0 +1,12 @@
+# Kit default hadolint config — used only when the repo has no .hadolint.yaml.
+ignored:
+  - DL3008   # pin apt versions — usually more trouble than it's worth for dev images
+  - DL3013   # pin pip versions — requirements files handle this
+  - DL3018   # pin apk versions
+override:
+  error:
+    - DL3002   # last USER is root
+    - DL3004   # sudo in Dockerfile
+  warning:
+    - DL3025   # use JSON notation for CMD/ENTRYPOINT
+    - DL4006   # set -o pipefail before RUN with pipes

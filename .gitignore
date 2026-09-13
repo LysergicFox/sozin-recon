@@ -34,3 +34,5 @@ testing/fixtures/
 # Internal design/planning docs + the R1–R16 review record are dev-local history,
 # kept on disk but not shipped in the repo.
 design_docs/
+.review/
+.scannerwork/

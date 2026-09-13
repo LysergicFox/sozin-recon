@@ -1,0 +1,24 @@
+# Kit default bandit config — used only when the repo has no [tool.bandit] / .bandit.
+exclude_dirs:
+  - .review
+  - .venv
+  - venv
+  - node_modules
+  - build
+  - dist
+  - tests
+skips:
+  - B101   # assert used — acceptable outside hardened prod paths
+  - B311   # random — not for crypto; the kit semgrep rule flags it only in token/secret contexts
+  # "consider the implications of importing X" — pure noise; the *usage* checks (B301, B602, ...) are what matter
+  - B403
+  - B404
+  - B405
+  - B406
+  - B407
+  - B408
+  - B409
+  - B410
+  - B411
+  - B412
+  - B413

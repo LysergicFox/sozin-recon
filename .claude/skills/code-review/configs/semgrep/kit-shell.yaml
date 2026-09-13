@@ -1,0 +1,42 @@
+# Kit-local semgrep rules for shell + Dockerfile (shellcheck/hadolint cover the rest).
+rules:
+  - id: kit.sh-curl-pipe-shell
+    languages: [bash]
+    severity: ERROR
+    message: "curl|sh style install — executes whatever the remote serves. Download, verify checksum, then run."
+    metadata: { category: security, cwe: "CWE-494", confidence: HIGH }
+    pattern-either:
+      - pattern: curl ... | sh
+      - pattern: curl ... | bash
+      - pattern: wget ... | sh
+      - pattern: wget ... | bash
+
+  - id: kit.sh-curl-insecure
+    languages: [bash]
+    severity: WARNING
+    message: "curl -k / --insecure disables TLS verification."
+    metadata: { category: security, cwe: "CWE-295" }
+    pattern-either:
+      - pattern: curl ... -k ...
+      - pattern: curl ... --insecure ...
+
+  - id: kit.sh-rm-rf-variable
+    languages: [bash]
+    severity: WARNING
+    message: "rm -rf on a variable path — if the variable is empty this becomes rm -rf / or ./; guard with ${VAR:?} and quote it."
+    metadata: { category: bug }
+    pattern-either:
+      - pattern: rm -rf $X/...
+      - pattern: rm -rf $X
+      - pattern: rm -fr $X
+
+  - id: kit.docker-add-remote-url
+    languages: [dockerfile]
+    severity: WARNING
+    message: "ADD with a remote URL — no checksum verification; prefer RUN curl + sha256sum, or COPY."
+    metadata: { category: security }
+    patterns:
+      - pattern: ADD $URL $DEST
+      - metavariable-regex:
+            metavariable: $URL
+            regex: '^https?://'

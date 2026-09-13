@@ -1,0 +1,66 @@
+# Kit default ruff config — used only when the repo has no [tool.ruff] / ruff.toml.
+# Copy into the repo (or the [tool.ruff] table into pyproject.toml) to customise.
+line-length = 100
+target-version = "py310"
+extend-exclude = [".review", ".venv", "venv", "build", "dist", "migrations"]
+
+[lint]
+select = [
+  "E", "W",     # pycodestyle
+  "F",          # pyflakes (undefined names, unused imports)
+  "I",          # isort
+  "N",          # pep8-naming
+  "UP",         # pyupgrade
+  "B",          # flake8-bugbear (likely bugs)
+  "S",          # flake8-bandit (security) — bandit proper still runs for the full set
+  "C4",         # comprehensions
+  "SIM",        # simplify
+  "RET",        # return statements
+  "ARG",        # unused arguments
+  "PIE",
+  "PL",         # pylint subset
+  "PERF",
+  "RUF",
+  "C901",       # mccabe complexity
+  "T20",        # print() left in library code
+  "ERA",        # commented-out code
+  "ASYNC",
+  "LOG",        # logging misuse
+  "G",          # logging format
+  "PTH",        # prefer pathlib
+  "DTZ",        # naive datetimes
+  "TRY",        # exception handling anti-patterns
+]
+ignore = [
+  "E501",       # line length: ruff format handles it
+  "PLR2004",    # magic values — too noisy
+  "PLR0913",    # too many args — judgement call
+  "TRY003",     # long exception messages
+  "S101",       # assert — fine outside prod paths; tests below
+  "T201",       # print — CLIs and tooling print
+  "ERA001",     # commented-out code — report-only would be spam
+  "RET504",
+  "SIM108",
+]
+
+[lint.mccabe]
+max-complexity = 12
+
+[lint.pylint]
+max-branches = 15
+max-statements = 60
+max-returns = 8
+
+[lint.per-file-ignores]
+"tests/**" = ["S", "ARG", "PLR", "D"]
+"test_*.py" = ["S", "ARG", "PLR"]
+"conftest.py" = ["S", "ARG"]
+"scripts/**" = ["T20"]
+"__init__.py" = ["F401"]
+
+[lint.isort]
+combine-as-imports = true
+
+[format]
+quote-style = "double"
+docstring-code-format = true
