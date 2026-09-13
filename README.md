@@ -53,6 +53,12 @@ by design (they slot between integer stages). Every active-traffic stage is
 scope-gated, per-host rate-bounded, and fault-isolated (one tool failing does
 not kill the run).
 
+The list above is a **stage → tools** catalog. Actual execution is
+**loop-until-stable**: PRE-LOOP {1} → LOOP {3, 4, F5, 5, 6, 6.5, 7} repeated
+until the asset graph converges → FINALIZE once {4.5, 8, 9, C2, C5, 10, 11 + the
+offline C4/F1/A2/F6 finalizers}. See **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**
+for the visual topology, the loop/convergence flow, and the data model.
+
 ## Output
 
 All state lands in the run directory you point it at:
