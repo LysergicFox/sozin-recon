@@ -211,17 +211,35 @@ until the LLM tier exists.
   "run_id": "…",
   "current_stage": 11,
   "current_pass": 3,                 // advances with each loop pass (loop-until-stable)
-  "status": "stable",                // "running" | "paused_needs_review" | "stage_complete" | "stable" | "error"
+  "status": "stable",                // "running" | "paused_needs_review" | "stage_complete" | "stable"
+                                     //   | "rate_exceeded" | "budget_exhausted" | "runtime_exceeded" | "error"
   "passes_completed": 3,             // number of loop passes actually run
   "pass_deltas": [                   // per-pass stability trail (loop-until-stable) — the exit reason, auditable
     { "pass": 1, "delta": 80 },      // delta = genuinely-new ASSETS that pass (records excluded)
     { "pass": 2, "delta": 7 },
     { "pass": 3, "delta": 0 }        // delta==0 → converged → status "stable"
   ],
+  "request_ledger": {                // (G1) runtime request-count ledger + rate-guard telemetry
+    "configured_rps": 5,             // the per-host courtesy rate the tools were told to honor
+    "total_requests": 6231,          // dominant-volume tools counted (ffuf/katana/bundler probe)
+    "elapsed_seconds": 812.4,        // run wall-clock since the ledger was armed
+    "per_host": { "acme.example.com": 2570 },
+    "tripped": null                  // null, or {reason, host, tool, observed_rps, allowed_rps, at_stage, detail}
+  },
   "last_updated": "…",
   "failed_at_stage": null            // (R7) set alongside status="error" on an unhandled crash
 }
 ```
+
+**(G1, implemented)** The `request_ledger` block is per-run telemetry from the runtime
+rate-guard (`request_ledger.py`). The guard observes each target-facing tool's observed
+rps vs the rate it was authorized for and halts the run — status `rate_exceeded` — if a
+tool grossly overshoots (a single ≥3× invocation, or a per-tool cumulative ≥1.5×). It
+also enforces the optional `scope.json.request_budget` caps (→ `budget_exhausted` /
+`runtime_exceeded`); with no `request_budget`, volume is uncapped by design (rate is the
+safety dimension, not volume). All three are **controlled halts, distinct from `error`**:
+the offline finalizers still run. `tripped` records why/where. The block is
+inspection-only telemetry — it is written out, never read back (a re-run starts clean).
 
 **(R7, implemented)** `main()` wraps the pipeline so an unhandled exception sets
 `status="error"` + `failed_at_stage` before re-raising. Paired with per-tool fault

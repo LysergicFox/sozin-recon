@@ -18,7 +18,10 @@ uses a credential, or confirms a vulnerability.
 > scope gate and per-host rate limits. You must supply a `scope.json` with an
 > explicit in-scope allowlist, `verified_by_human: true`, and an affirmative
 > `rate_limit` block before the pipeline will run. An absent rate-limit block
-> **blocks** the run rather than guessing (fail-closed).
+> **blocks** the run rather than guessing (fail-closed). At runtime a request-count
+> **rate-guard** observes how fast tools actually send requests and gracefully halts
+> the run if a tool grossly exceeds the rate it was authorized for — so an unattended
+> run can't quietly overshoot even if a tool ignores its own rate flag.
 
 **New here? Start with [QUICKSTART.md](QUICKSTART.md)** — build → scope → run →
 read results, end to end.
@@ -182,6 +185,31 @@ Minimal shape (full example in `scope.example.json`):
   the conservative default — but the block must be **present**, or the run is
   blocked.
 
+### Runtime rate-guard & optional `request_budget`
+
+The `rate_limit` block tells each tool how fast it *may* go; the **runtime rate-guard**
+(always on) checks how fast it *actually* went and halts the run — status
+`rate_exceeded` — if a tool's observed rate grossly exceeds what it was authorized for.
+The rate is the safety-relevant dimension, so it is always enforced.
+
+**Total volume is not.** Programs almost never state a request cap, and inventing one
+would truncate legitimate deep recon, so there is **no volume cap by default**. Add an
+optional `request_budget` block *only* when a program states such a limit:
+
+```json
+"request_budget": {
+  "max_requests_per_host": 50000,
+  "max_requests_total": 200000,
+  "max_runtime_seconds": 21600
+}
+```
+
+All fields are optional (omit the block entirely for the default: rate-guarded,
+uncapped). A cap that is hit halts the run with status `budget_exhausted`
+(`runtime_exceeded` for the wall-clock cap). On any halt the offline finalizers still
+run, so you get a labeled, scored surface over whatever was gathered. Per-run request
+telemetry lands in `run_state.json`'s `request_ledger` block.
+
 ---
 
 ## Design & discipline
@@ -223,8 +251,11 @@ not a gap.
 - Network secret verification (trufflehog) and additional passive/discovery
   breadth (chaos/asnmap sources, origin-IP discovery, GraphQL introspection,
   NSEC walking).
-- A ratio-based runtime request-count safety net (per-invocation rate caps are
-  enforced today).
+- A **measuring/throttling egress proxy** (Phase B of the runtime rate-guard): the
+  detective rate-guard shipped today observes and halts *post-invocation* (a tool that
+  ignores its flag is caught after that host, before the next); routing all HTTP tools
+  through a local measuring proxy would enforce the rate in real time regardless of
+  tool behavior. The ledger is built to accept proxy-fed counts without stage changes.
 
 ## Licensing / authorization
 

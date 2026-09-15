@@ -218,51 +218,62 @@ def run_katana(hosts: list[str], state: RunState, scope: dict) -> tuple[dict[str
     # collapses to sequential (workers=1) under a global rate scope so the
     # aggregate never exceeds the stated global ceiling.
     rate = katana_rate_args(scope)
+    allowed_rps = int(rate.extra_args[1])   # (G1) -rl value = the authorized per-host rps (true per-host cap)
     workers = resolve_host_workers(scope)
     logger.info("katana rate limit (per host): %s; host workers=%d", rate.note, workers)
 
     def _crawl_one(host: str) -> tuple[dict[str, dict], list[str]]:
+        # (G1) once the rate-guard has tripped, send no further target traffic
+        if not state.ledger.guard_allows():
+            logger.info("katana: skipping %s - request rate-guard tripped", host)
+            return {}, []
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write(f"https://{host}")
             seeds_path = f.name
-        try:
-            stdout, stderr, code = _run_tool([
-                "katana", "-list", seeds_path,
-                "-jsonl", "-silent",
-                "-jc",
-                "-kf", "all",
-                "-td",
-                "-fs", "rdn",  # (R1, VERIFIED) field-scope = root domain name - stay on the target's own root domain
-                # SAFETY: never FOLLOW a link whose path names a state-changing action
-                # (delete/logout/reset-password/…). katana follows app-provided, often
-                # already-tokened URLs, so following one can complete the action; -cos
-                # (crawl-out-scope) excludes them from being crawled. Shared token set with
-                # the x8 guard (destructive_paths).
-                "-cos", crawl_out_scope_regex(),
-                *rate.extra_args,
-                *header_args(scope),   # program-mandated headers on all target traffic
-            ])
-        finally:
-            Path(seeds_path).unlink(missing_ok=True)
-        state.save_raw(STAGE, f"katana_{host}", stdout)   # (R5) per-host archive, no collision
-
         local_meta: dict[str, dict] = {}
         local_urls: list[str] = []
-        for line in stdout.splitlines():
-            line = line.strip()
-            if not line:
-                continue
+        stdout = ""
+        # (G1) time the crawl; crawled-endpoint count is a lower bound on requests sent
+        # (katana also fetches robots/sitemap/JS it doesn't emit), sound for the tripwire.
+        with state.ledger.measure(host, "katana", allowed_rps=allowed_rps, at_stage=STAGE) as inv:
             try:
-                obj = json.loads(line)
-            except json.JSONDecodeError:
-                logger.warning("katana: could not parse line as JSON: %r", line)
-                continue
-            request = obj.get("request") or {}
-            endpoint = request.get("endpoint")
-            if not endpoint:
-                continue
-            local_urls.append(endpoint)
-            local_meta[endpoint] = _extract_metadata(obj)
+                stdout, stderr, code = _run_tool([
+                    "katana", "-list", seeds_path,
+                    "-jsonl", "-silent",
+                    "-jc",
+                    "-kf", "all",
+                    "-td",
+                    "-fs", "rdn",  # (R1, VERIFIED) field-scope = root domain name - stay on the target's own root domain
+                    # SAFETY: never FOLLOW a link whose path names a state-changing action
+                    # (delete/logout/reset-password/…). katana follows app-provided, often
+                    # already-tokened URLs, so following one can complete the action; -cos
+                    # (crawl-out-scope) excludes them from being crawled. Shared token set with
+                    # the x8 guard (destructive_paths).
+                    "-cos", crawl_out_scope_regex(),
+                    *rate.extra_args,
+                    *header_args(scope),   # program-mandated headers on all target traffic
+                ])
+            finally:
+                Path(seeds_path).unlink(missing_ok=True)
+
+            for line in stdout.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    logger.warning("katana: could not parse line as JSON: %r", line)
+                    continue
+                request = obj.get("request") or {}
+                endpoint = request.get("endpoint")
+                if not endpoint:
+                    continue
+                local_urls.append(endpoint)
+                local_meta[endpoint] = _extract_metadata(obj)
+            inv.requests = len(local_urls)   # (G1) crawled endpoints ~= requests (lower bound)
+
+        state.save_raw(STAGE, f"katana_{host}", stdout)   # (R5) per-host archive, no collision
         return local_meta, local_urls
 
     # (R7) a per-host crawl failure is logged + skipped by the helper, not fatal.

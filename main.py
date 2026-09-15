@@ -37,6 +37,7 @@ from scope_gate import (
     extract_host,
 )
 from rate_limit_gate import check_run_not_blocked
+from rate_limits import resolve_effective_rps
 from http_headers import required_headers
 from url_hygiene import is_malformed_url_asset
 from stages.stage1_passive import run_stage1
@@ -306,7 +307,8 @@ def run_stage_and_report(stage_num: int, stage_name: str, found: list[Asset],
         in_scope_count, review_count, out_count,
     )
 
-    state.update_run_state(current_stage=stage_num, status="stage_complete")
+    state.update_run_state(current_stage=stage_num, status="stage_complete",
+                           request_ledger=state.ledger.snapshot())   # (G1) flush ledger telemetry
     return newly_added
 
 
@@ -669,7 +671,8 @@ def run_stage8_and_report(state: RunState, scope: dict) -> None:
     else:
         logger.info("Stage 8 (C1): no detection findings")
 
-    state.update_run_state(current_stage=8, status="stage_complete")
+    state.update_run_state(current_stage=8, status="stage_complete",
+                           request_ledger=state.ledger.snapshot())   # (G1)
 
 
 def run_stage9_and_report(state: RunState, scope: dict) -> None:
@@ -698,7 +701,8 @@ def run_stage9_and_report(state: RunState, scope: dict) -> None:
     logger.info("Applied stage 9 whatweb metadata updates to %d existing host(s)",
                 len(stage9_metadata_updates))
 
-    state.update_run_state(current_stage=9, status="stage_complete")
+    state.update_run_state(current_stage=9, status="stage_complete",
+                           request_ledger=state.ledger.snapshot())   # (G1)
 
 
 # ---------------------------------------------------------------------------
@@ -896,7 +900,17 @@ def _run_finalize(root_domains: list[str], patterns: ScopePatterns, state: RunSt
     (x8 runs at the START of a pass). So begin with one record-only x8 harvest
     over the full in-scope live URL set. A clean (delta == 0) exit needs no
     harvest - the last pass added no URLs, so x8 already saw everything."""
-    if not converged:
+    # (G1) Once the rate-guard has tripped, target-facing finalizers are skipped (no
+    # further target traffic); the offline finalizers (E4/C5/C4/F1/A2/F6) and the
+    # archive-facing stage 11 still run, so a tripped run yields a labeled/scored surface.
+    def _target_facing(label, thunk):
+        if state.ledger.is_tripped():
+            logger.warning("Finalize: skipping %s - request rate-guard tripped (%s); "
+                           "no further target traffic.", label, state.ledger.trip.reason)
+            return
+        thunk()
+
+    if not converged and not state.ledger.is_tripped():
         harvest_pass = final_pass + 1
         state.current_pass = harvest_pass
         logger.info("--- D5: final x8 harvest (loop exited un-converged) - x8 over the "
@@ -907,25 +921,26 @@ def _run_finalize(root_domains: list[str], patterns: ScopePatterns, state: RunSt
     # Finalize stages run once and have their own (distinct) stage numbers, so
     # their raw archives never collide across passes; leave the ambient cursor at
     # the last value.
-    run_waf_cdn_and_report(patterns, state, scope)   # stage 4.5 (C3) WAF/CDN detection
+    _target_facing("stage 4.5 (WAF/CDN)", lambda: run_waf_cdn_and_report(patterns, state, scope))
 
     # (E4) OFFLINE secret classification — label stage-7 secrets by kind/provider
     # from their R8 raw archives; ZERO network (never validates — primitive's job).
     logger.info("--- E4: offline secret classification (kind/provider, no network) ---")
     run_secret_classification(state)
 
-    run_stage8_and_report(state, scope)
+    _target_facing("stage 8 (nuclei takeover + detection)", lambda: run_stage8_and_report(state, scope))
 
-    run_stage9_and_report(state, scope)
+    _target_facing("stage 9 (whatweb)", lambda: run_stage9_and_report(state, scope))
 
-    run_screenshots_and_report(patterns, state, scope)   # C2 screenshots (httpx headless Chrome)
+    _target_facing("C2 (screenshots)", lambda: run_screenshots_and_report(patterns, state, scope))
 
     # (C5) OFFLINE tech→CVE candidate flagging from stage-9 version fingerprints →
     # recon_findings (source=cve-candidate); runs before A2 so it can score them.
     logger.info("--- C5: tech→CVE candidate flagging (offline, unconfirmed leads) ---")
     run_cve_candidates(state)
 
-    run_stage10_and_report(patterns, state, scope)   # stage 10 (B2a) API-schema discovery
+    _target_facing("stage 10 (API-schema discovery)",
+                   lambda: run_stage10_and_report(patterns, state, scope))   # (B2a)
 
     run_archived_js_and_report(patterns, state, scope)   # stage 11 (B4) archived-JS mining
 
@@ -955,6 +970,16 @@ def run_pipeline(root_domains: list[str], patterns: ScopePatterns, state: RunSta
     {stage 1} → LOOP {3,4,F5,5,6,6.5,7} until the convergence guard fires →
     FINALIZE {4.5..F6} once. See RECON_LOOP_DESIGN.md.
     """
+    # (G1) Fail-closed: never run the full pipeline against a target with the runtime
+    # rate-guard disarmed. main() arms it (state.ledger.configure) after the pre-run
+    # gates; a programmatic caller that skips arming would otherwise send live traffic
+    # with the safety net silently off - the opposite of the scope/rate gates' posture.
+    if not state.ledger.is_armed():
+        raise RuntimeError(
+            "request_ledger is not armed - refusing to run the pipeline with the runtime "
+            "rate-guard disabled. Call state.ledger.configure(configured_rps, budget) "
+            "after the pre-run gates before run_pipeline() (see main())."
+        )
     state.update_run_state(current_stage=1, current_pass=1, status="running")
     # A run re-run into an existing dir must not inherit a prior attempt's error
     # (update_run_state is merge-only). Start clean.
@@ -978,6 +1003,15 @@ def run_pipeline(root_domains: list[str], patterns: ScopePatterns, state: RunSta
         delta = _run_loop_pass(root_domains, patterns, state, scope, current_pass)
         state.record_pass_delta(current_pass, delta)
 
+        # (G1) A tripped rate-guard halts the loop immediately - remaining loop-body
+        # stages this pass already no-op'd (their per-host workers check guard_allows),
+        # so the graph is as complete as it will get. Break to finalize; converged
+        # stays False and the offline finalizers still run.
+        if state.ledger.is_tripped():
+            logger.warning("Loop halted at pass %d by the request rate-guard: %s",
+                           current_pass, state.ledger.trip.detail)
+            break
+
         stop, reason = loop_should_terminate(delta, current_pass, max_passes, total_before)
         logger.info("=== Loop pass %d done: delta=%d new asset(s) -> %s ===",
                     current_pass, delta, reason if stop else "another pass")
@@ -992,8 +1026,14 @@ def run_pipeline(root_domains: list[str], patterns: ScopePatterns, state: RunSta
 
     _run_finalize(root_domains, patterns, state, scope, converged, passes_completed)
 
-    final_status = "stable" if converged else "stage_complete"
-    state.update_run_state(status=final_status, passes_completed=passes_completed)
+    # (G1) A tripped ledger is a controlled safety halt, distinct from an error: the
+    # trip reason (rate_exceeded | budget_exhausted | runtime_exceeded) IS the status.
+    if state.ledger.is_tripped():
+        final_status = state.ledger.trip.reason
+    else:
+        final_status = "stable" if converged else "stage_complete"
+    state.update_run_state(status=final_status, passes_completed=passes_completed,
+                           request_ledger=state.ledger.snapshot())   # (G1) final ledger flush
     logger.info("Pipeline complete after %d loop pass(es), status=%s. See %s and %s",
                 passes_completed, final_status, state.assets_db_path, state.review_path)
 
@@ -1086,6 +1126,15 @@ def main():
 
     logger.info("Checking rate_limit gate")
     check_run_not_blocked(scope)
+
+    # (G1) Arm the runtime request-count ledger + ratio rate-guard before any stage.
+    # configured_rps = the per-host courtesy rate the tools were told to honor;
+    # request_budget = optional opt-in volume/runtime caps (absent = uncapped, so a
+    # program that states no volume limit is never given a fabricated one).
+    state.ledger.configure(
+        configured_rps=resolve_effective_rps(scope),
+        budget=scope.get("request_budget"),
+    )
 
     root_domains = extract_root_domains(scope)
     if not root_domains:

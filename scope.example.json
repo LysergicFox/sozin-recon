@@ -24,5 +24,10 @@
   },
   "run_options": {
     "max_passes": 4
+  },
+  "request_budget": {
+    "max_requests_per_host": null,
+    "max_requests_total": null,
+    "max_runtime_seconds": null
   }
 }

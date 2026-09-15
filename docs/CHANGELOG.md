@@ -5,6 +5,37 @@ Compact, newest-first. Status tags: **DONE** / **DESIGN** (locked, not built) /
 
 ---
 
+## 2026-09-14 — G1: runtime request-count ledger + ratio rate-guard **DONE**
+
+New **Track G (runtime safety instrumentation)**. Makes an **unattended** run safe:
+`rate_limits.py` tells each tool how fast it *may* go; G1 (`request_ledger.py`) watches
+how fast it *actually* went and gracefully halts the run if a tool grossly exceeds the
+rate it was authorized for — closing the "no backstop if a tool ignores its flag" gap
+(and the README's named "ratio-based runtime request-count safety net" roadmap item /
+the R3 residual).
+
+- **Rate is fail-closed; volume is not invented.** The ratio tripwire is always on
+  (hard: one ≥`3×` invocation; soft: per-tool **cumulative** ≥`1.5×` — order-independent,
+  and it fires for a tool over-rating many once-visited hosts, unlike a per-host streak).
+  Volume caps (`request_budget`: `max_requests_per_host`/`_total`/`max_runtime_seconds`)
+  are **opt-in** and absent-by-default — a program that states no volume limit is never
+  given a fabricated one. New statuses: `rate_exceeded` / `budget_exhausted` /
+  `runtime_exceeded` (controlled halts, distinct from `error`; offline finalizers still run).
+- **Only trustworthy counts drive the tripwire.** ffuf (wordlist-length lower bound) and
+  katana (crawled-count lower bound) are enforced; tools without a sound count
+  (x8 serial/batched, nuclei) record telemetry + obey caps + stop-after-trip but never
+  rate-trip (no false positives from an estimate). Fed the *exact* rate flag value as the
+  baseline (scope-correct for per_host and global).
+- **Fail-closed arming:** `run_pipeline` refuses to run with the guard disarmed; guard
+  short-circuits all target traffic after a trip (loop breaks; finalize skips the
+  target-facing stages, runs the offline ones).
+- Followed design → adversarial review (6 findings resolved, incl. the streak→cumulative
+  fix) → mocked tests (22: unit + integration) → real ginandjuice run. 🐛→✅ real-run:
+  compliant katana (2.48 rps) / ffuf (4.76 rps) did **not** false-trip; a tiny cap tripped
+  `budget_exhausted` on a real ffuf invocation. **224 tests pass.** Deferred: a
+  measuring/throttling egress proxy (Phase B) for real-time enforcement. See
+  `RECON_G1_REQUEST_LEDGER_DESIGN.md`.
+
 ## 2026-09-12 — v1.0: all five readiness caveats closed 🚀
 
 sozin-recon reaches **v1.0** — the standalone, scripted, deterministic recon

@@ -147,6 +147,25 @@ def _sanitize(s: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]", "_", s)
 
 
+_WORDLIST_LEN_CACHE: int | None = None
+
+
+def _wordlist_len() -> int:
+    """(G1) Non-empty line count of the ffuf wordlist x (1 + extensions) - the per-host
+    base request count, a sound LOWER bound on what ffuf actually sends (recursion + -ac
+    only ADD). Fed to the rate ledger as ffuf's request count: a lower bound can under-
+    trip but never over-count, so it can never false-trip a compliant run. Cached (the
+    wordlist doesn't change within a run); a missing file -> 0 (ffuf was already skipped)."""
+    global _WORDLIST_LEN_CACHE
+    if _WORDLIST_LEN_CACHE is None:
+        try:
+            with open(WORDLIST_PATH) as f:
+                _WORDLIST_LEN_CACHE = sum(1 for line in f if line.strip())
+        except OSError:
+            _WORDLIST_LEN_CACHE = 0
+    return _WORDLIST_LEN_CACHE * (1 + len(EXTENSIONS))
+
+
 def _run_tool(cmd: list[str], timeout: int = DEFAULT_TIMEOUT_SECONDS) -> tuple[str, str, int]:
     logger.info("Running: %s", " ".join(cmd))
     try:
@@ -222,10 +241,17 @@ def run_ffuf(host: str, state: RunState, scope: dict, base: str | None = None) -
     httpx_final_url. Real-run finding (2026-08-23): hardcoding https silently fails
     against http-only live hosts (e.g. a local test app) - so the scheme comes from
     what stage 4 actually confirmed, defaulting to https only when unknown."""
+    # (G1) once the rate-guard has tripped, send no further target traffic
+    if not state.ledger.guard_allows():
+        logger.info("ffuf: skipping %s - request rate-guard tripped", host)
+        return [], {"waf_suspected": False, "waf_signal": None, "waf_block_ratio": None}
+
     base = base or f"https://{host}"
     seed = f"{base}/FUZZ"                              # FUZZ keyword = same-origin by construction (R1)
     out_path = state.raw_path(STAGE, f"ffuf_{_sanitize(host)}")   # R5 per-target raw file
 
+    rate = ffuf_rate_args(scope)
+    allowed_rps = int(rate.extra_args[1])              # (G1) the -rate value = authorized per-host rps
     cmd = [
         "ffuf",
         "-u", seed,
@@ -241,11 +267,15 @@ def run_ffuf(host: str, state: RunState, scope: dict, base: str | None = None) -
         "-noninteractive",
         "-s",                                          # silent: suppress the matched-path stdout echo
         "-t", str(THREADS),
-        *ffuf_rate_args(scope).extra_args,             # -rate <n> (true per-host cap)
+        *rate.extra_args,                              # -rate <n> (true per-host cap)
         *header_args(scope),                           # program-mandated headers on all target traffic
         # NO -r: do NOT follow redirects (R1 — a 30x is a recorded finding, not a chase)
     ]
-    _stdout, stderr, _code = _run_tool(cmd)
+    # (G1) time the fuzz; feed the wordlist-length lower bound to the rate ledger. ffuf is
+    # the pipeline's heaviest tool, so it is rate-tripwire-enforced (evaluate_rate default).
+    with state.ledger.measure(host, "ffuf", allowed_rps=allowed_rps, at_stage=STAGE) as inv:
+        _stdout, stderr, _code = _run_tool(cmd)
+        inv.requests = _wordlist_len()
     hits = _parse_ffuf_json(out_path)
     waf = _detect_waf(stderr, hits)
     if waf["waf_suspected"]:

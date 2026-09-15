@@ -40,6 +40,8 @@ from pathlib import Path
 from typing import Literal, Optional
 from urllib.parse import urlsplit, urlunsplit
 
+from request_ledger import RequestLedger
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -519,6 +521,13 @@ class RunState:
         # for single-pass runs and the standalone stage re-runners. See
         # RECON_LOOP_DESIGN.md (D6).
         self.current_pass = 1
+
+        # (G1) Runtime request-count ledger + ratio rate-guard. Created DISARMED
+        # (guard allows all, telemetry accumulates, never trips); main.py arms it via
+        # ledger.configure(rps, budget) after the pre-run gates, before any stage. The
+        # standalone stage re-runners and mocked tests leave it disarmed - byte-identical
+        # to pre-G1 behavior. See request_ledger.py + RECON_G1_REQUEST_LEDGER_DESIGN.md.
+        self.ledger = RequestLedger()
 
         # R8: the run dir is sensitive-at-rest TODAY (stage 7 extracts real
         # secrets). Owner-only at init, whether freshly created or re-opened.

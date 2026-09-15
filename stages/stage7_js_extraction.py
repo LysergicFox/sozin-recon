@@ -133,6 +133,11 @@ def probe_bundler_paths(hosts: list[str], state: RunState, scope: dict) -> list[
     if not hosts:
         return []
 
+    # (G1) once the rate-guard has tripped, send no further target traffic
+    if not state.ledger.guard_allows():
+        logger.info("bundler probe: skipping - request rate-guard tripped")
+        return []
+
     targets = []
     for host in hosts:
         for path in BUNDLER_PATHS:
@@ -144,15 +149,22 @@ def probe_bundler_paths(hosts: list[str], state: RunState, scope: dict) -> list[
         targets_path = f.name
 
     rate = httpx_rate_args(scope, host_count=len(targets))
+    allowed_rps = int(rate.extra_args[1])   # (G1) the -rl value = authorized aggregate rps for this invocation
     logger.info("bundler probe httpx rate limit: %s", rate.note)
 
-    stdout, stderr, code = _run_tool([
-        "httpx", "-l", targets_path,
-        "-json", "-silent",
-        "-status-code",
-        "-mc", "200",
-        *rate.extra_args,
-    ])
+    # (G1) ~15 probes/host in one whole-invocation-rl call: recorded for telemetry, but
+    # evaluate_rate=False - the volume is below the safety-relevant threshold and a multi-
+    # host invocation can't be attributed per host (true enforcement rides with Phase B).
+    with state.ledger.measure("bundler-probe", "httpx-bundler", allowed_rps=allowed_rps,
+                              at_stage=STAGE, evaluate_rate=False) as inv:
+        stdout, stderr, code = _run_tool([
+            "httpx", "-l", targets_path,
+            "-json", "-silent",
+            "-status-code",
+            "-mc", "200",
+            *rate.extra_args,
+        ])
+        inv.requests = len(targets)   # ~1 probe request per (host, path)
     state.save_raw(STAGE, "bundler_probe_httpx", stdout)
 
     found_urls = []
@@ -298,6 +310,10 @@ def run_stage7(known_in_scope_hosts: list[str], known_js_urls: list[str],
 
     with timed(state, "stage7.jsluice_total"):
         for js_url in all_js_urls_to_process:
+            # (G1) jsluice FETCHES each remote JS URL (target traffic) - stop after a trip.
+            if not state.ledger.guard_allows():
+                logger.info("stage 7: rate-guard tripped - stopping jsluice fetches")
+                break
             try:
                 url_findings = run_jsluice_urls(js_url, state)
             except Exception:
